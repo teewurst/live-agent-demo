@@ -1,0 +1,9 @@
+node_modules/
+mcp-mock/node_modules/
+dist/
+.env
+*.log
+logs/
+.DS_Store
+coverage/
+.vite/

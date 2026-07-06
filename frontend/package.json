@@ -1,0 +1,24 @@
+{
+  "name": "voice-call-demo-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@vue-flow/core": "^1.48.2",
+    "@ricky0123/vad-web": "^0.0.29",
+    "onnxruntime-web": "^1.22.0",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5",
+    "vite-plugin-static-copy": "^2.3.0",
+    "vue-tsc": "^2.2.0"
+  }
+}

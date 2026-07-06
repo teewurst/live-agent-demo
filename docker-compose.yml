@@ -1,0 +1,34 @@
+services:
+  crm-mcp:
+    build:
+      context: ./mcp-mock
+    command: ["node", "dist/crm-server.js"]
+    environment:
+      MCP_CRM_PORT: 3010
+      DEMO_CUSTOMER_PASSWORDS: ${DEMO_CUSTOMER_PASSWORDS:-{"12345":"9876","67890":"horizon42"}}
+    ports:
+      - "3010:3010"
+
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "${BACKEND_PORT:-3001}:3001"
+    env_file:
+      - .env
+    environment:
+      MCP_SERVER_URLS: http://crm-mcp:3010/mcp
+    volumes:
+      - ./logs/agent-turns:/app/logs/agent-turns
+    depends_on:
+      - crm-mcp
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE: http://localhost:3001
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
