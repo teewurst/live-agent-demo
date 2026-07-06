@@ -16,6 +16,10 @@ import {
 } from "./sessions.js";
 import { closeSse, initSseResponse, writeEvent } from "./sse.js";
 import { applyToolBackendFromRequest } from "./toolBackend.js";
+import { loadMcpDiscoveryCacheFromDisk } from "./mcpDiscoveryCache.js";
+import { TurnProfiler } from "./turnProfiler.js";
+
+loadMcpDiscoveryCacheFromDisk();
 
 function sessionIdFromParams(value: string | string[]): string {
   return Array.isArray(value) ? value[0] : value;
@@ -197,10 +201,13 @@ app.post(
 
       writeEvent(res, "status", { state: "transcribing" });
 
+      const profiler = new TurnProfiler();
+
       const transcript = await transcribeAudio(
         req.file.buffer,
         req.file.mimetype,
         signal,
+        profiler,
       );
 
       if (signal.aborted) {
@@ -210,7 +217,7 @@ app.post(
         return;
       }
 
-      await processTextTurn({ session, res, userText: transcript, signal });
+      await processTextTurn({ session, res, userText: transcript, signal, profiler });
     } catch (error) {
       if (isAbortError(error) || signal.aborted) {
         writeEvent(res, "status", { state: "interrupted" });

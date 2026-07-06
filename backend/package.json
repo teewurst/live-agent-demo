@@ -4,10 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc",
+    "prebuild": "node scripts/clear-mcp-cache.mjs",
+    "build": "npm run prebuild && tsc",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
-    "test:e2e": "node --test tests/agent-orchestration.e2e.test.mjs"
+    "test:e2e": "node --test tests/agent-orchestration.e2e.test.mjs tests/standard-benchmark.test.mjs",
+    "test:benchmark:live": "node --test tests/standard-benchmark.live.test.mjs",
+    "benchmark": "node scripts/run-standard-benchmark.mjs --live",
+    "benchmark:voice": "node scripts/run-standard-benchmark.mjs --live --voice",
+    "benchmark:mock": "node scripts/run-standard-benchmark.mjs --mock"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

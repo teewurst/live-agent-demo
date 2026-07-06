@@ -10,9 +10,37 @@ export type SseEventName =
   | "agent_trace"
   | "tool_call"
   | "tool_result"
+  | "turn_profile"
   | "error";
 
 export type SseHandler = (event: SseEventName, data: Record<string, unknown>) => void;
+
+export type UtteranceUploadTiming = {
+  /** requestStart → responseStart (upload + server header flush) */
+  uploadMs: number;
+  /** TCP/TLS connect; 0 when connection is reused (keep-alive) */
+  connectMs: number;
+  audioBytes: number;
+};
+
+function readUtteranceResourceTiming(
+  url: string,
+  fallbackMs: number,
+): Pick<UtteranceUploadTiming, "uploadMs" | "connectMs"> {
+  const entries = performance.getEntriesByType("resource") as PerformanceResourceTiming[];
+  const entry = [...entries].reverse().find((item) => item.name.startsWith(url));
+  if (!entry || entry.responseStart <= 0 || entry.requestStart <= 0) {
+    return { uploadMs: fallbackMs, connectMs: 0 };
+  }
+
+  const uploadMs = Math.max(0, Math.round(entry.responseStart - entry.requestStart));
+  const connectMs =
+    entry.connectEnd > 0 && entry.connectStart > 0
+      ? Math.max(0, Math.round(entry.connectEnd - entry.connectStart))
+      : 0;
+
+  return { uploadMs, connectMs };
+}
 
 export type ToolBackendMode = "local" | "mcp";
 
@@ -167,25 +195,39 @@ export async function sendUtterance(
   signal?: AbortSignal,
   clientTurnId?: string,
   toolBackend?: ToolBackendMode,
-): Promise<void> {
+  onUploadComplete?: (timing: UtteranceUploadTiming) => void,
+): Promise<UtteranceUploadTiming> {
   const formData = new FormData();
   formData.append("audio", audioBlob, "utterance.webm");
   if (clientTurnId) {
     formData.append("clientTurnId", clientTurnId);
   }
 
-  const response = await fetch(`${API_BASE}/api/sessions/${sessionId}/utterance`, {
+  const utteranceUrl = `${API_BASE}/api/sessions/${sessionId}/utterance`;
+  const uploadStarted = performance.now();
+  const response = await fetch(utteranceUrl, {
     method: "POST",
     body: formData,
     signal,
     headers: toolBackendHeaders(toolBackend),
   });
+  const fallbackUploadMs = Math.max(0, Math.round(performance.now() - uploadStarted));
+  const { uploadMs, connectMs } = readUtteranceResourceTiming(utteranceUrl, fallbackUploadMs);
 
   if (!response.ok || !response.body) {
     throw new Error("Failed to send utterance");
   }
 
+  const timing: UtteranceUploadTiming = {
+    uploadMs,
+    connectMs,
+    audioBytes: audioBlob.size,
+  };
+  onUploadComplete?.(timing);
+
   await parseSseStream(response.body, onEvent, signal);
+
+  return timing;
 }
 
 export async function sendDebugMessage(

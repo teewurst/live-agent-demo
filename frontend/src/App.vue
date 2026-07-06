@@ -39,12 +39,14 @@ const errorMessage = ref<string | null>(null);
 const {
   sessionLog,
   execution,
+  turnProfile,
   expandedIds,
   liveAssistantId,
   clearSession,
   resetExecution,
   setGraphIdle,
   markInterrupted,
+  setClientTurnTiming,
   setOutputPlaybackActive,
   onPlaybackEnded,
   toggleExpanded,
@@ -133,6 +135,7 @@ async function handleSseEvent(event: SseEventName, data: Record<string, unknown>
       if (!acceptAudioSegments) {
         break;
       }
+      setOutputPlaybackActive(true);
       playbackQueue.enqueue(
         String(data.base64 ?? ""),
         String(data.mimeType ?? "audio/mpeg"),
@@ -144,6 +147,13 @@ async function handleSseEvent(event: SseEventName, data: Record<string, unknown>
       break;
     default:
       break;
+  }
+
+  if (event === "assistant_caption_delta" || event === "tool_call") {
+    const toolName = event === "tool_call" ? String(data.toolName ?? "") : "";
+    if (event === "assistant_caption_delta" || toolName === "emit_output") {
+      setOutputPlaybackActive(true);
+    }
   }
 
   handleOrchestrationEvent(event, data);
@@ -245,6 +255,7 @@ async function submitUtterance(blob: Blob): Promise<void> {
       activeSignal,
       String(turnCounter),
       toolBackendMode.value,
+      (timing) => setClientTurnTiming(timing),
     );
   } catch (error) {
     if (activeSignal.aborted) {
@@ -516,6 +527,7 @@ onBeforeUnmount(() => {
       <BackgroundPanel
         :items="sessionLog"
         :execution="execution"
+        :turn-profile="turnProfile"
         :expanded-ids="expandedIds"
         :tool-backend-mode="toolBackendMode"
         @toggle-expand="toggleExpanded"

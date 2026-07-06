@@ -3,6 +3,7 @@ import { config } from "./config.js";
 import { TTS_INSTRUCTIONS } from "./ttsConfig.js";
 import { AppError, isAbortError } from "./errors.js";
 import type { SynthesizedAudio } from "./types.js";
+import type { TurnProfiler } from "./turnProfiler.js";
 
 const openai = new OpenAI({
   apiKey: config.OPENAI_API_KEY,
@@ -26,15 +27,19 @@ export async function transcribeAudio(
   buffer: Buffer,
   mimeType: string,
   signal?: AbortSignal,
+  profiler?: TurnProfiler,
 ): Promise<string> {
   if (!buffer.length) {
     throw new AppError("Empty audio upload", "EMPTY_AUDIO", 400);
   }
 
   const extension = extensionForMime(mimeType);
+  profiler?.startSpan("stt-prep", "transcribing", "STT prepare", "build audio file");
   const file = await toFile(buffer, `utterance.${extension}`, { type: mimeType });
+  profiler?.endSpan("stt-prep");
 
   try {
+    profiler?.startSpan("stt-api", "transcribing", "STT API", config.OPENAI_STT_MODEL);
     const result = await openai.audio.transcriptions.create(
       {
         file,
@@ -42,6 +47,7 @@ export async function transcribeAudio(
       },
       { signal },
     );
+    profiler?.endSpan("stt-api");
 
     const text = result.text?.trim() ?? "";
     if (!text) {
@@ -50,6 +56,7 @@ export async function transcribeAudio(
 
     return text;
   } catch (error) {
+    profiler?.endSpan("stt-api");
     if (isAbortError(error)) {
       throw error;
     }

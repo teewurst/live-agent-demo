@@ -13,7 +13,7 @@ const VAD_REDEMPTION_MS = 1600;
 const VAD_PRE_SPEECH_PAD_MS = 450;
 
 /** Sustained speech segment required to interrupt agent playback. */
-const PLAYBACK_BARGE_IN_MS = 2000;
+const PLAYBACK_BARGE_IN_MS = 1300;
 
 export class UtteranceRecorder {
   private micVad: MicVAD | null = null;

@@ -7,6 +7,8 @@ import {
   type TimelineItem,
   type ToolNodeState,
 } from "../types/orchestration";
+import type { TurnProfile, TurnProfileBucket, TurnProfileSpan, ClientTurnTiming } from "../types/turnProfile";
+import { mergeClientTurnTiming } from "../types/turnProfile";
 
 const MCP_TOOLS = new Set<McpToolId>([
   "retrieve_information",
@@ -85,11 +87,40 @@ function setPhase(state: ExecutionState, phase: ExecutionState["phase"], waiting
   syncAgentWaiting(state);
 }
 
+function parseTurnProfile(data: Record<string, unknown>): TurnProfile {
+  const buckets = Array.isArray(data.buckets)
+    ? (data.buckets as Record<string, unknown>[]).map((bucket) => ({
+        key: String(bucket.key ?? "agent") as TurnProfileBucket["key"],
+        label: String(bucket.label ?? bucket.key ?? "Step"),
+        ms: Number(bucket.ms ?? 0),
+      }))
+    : [];
+
+  const spans = Array.isArray(data.spans)
+    ? (data.spans as Record<string, unknown>[]).map((span) => ({
+        id: String(span.id ?? ""),
+        kind: String(span.kind ?? "agent_llm") as TurnProfileSpan["kind"],
+        label: String(span.label ?? "Step"),
+        ms: Number(span.ms ?? 0),
+        detail: span.detail ? String(span.detail) : undefined,
+      }))
+    : [];
+
+  return {
+    turnId: Number(data.turnId ?? 0),
+    totalMs: Number(data.totalMs ?? 0),
+    buckets,
+    spans,
+  };
+}
+
 export function useOrchestrationState() {
   const sessionLog = ref<TimelineItem[]>([]);
   const execution = ref<ExecutionState>(createIdleExecution());
+  const turnProfile = ref<TurnProfile | null>(null);
   const expandedIds = ref<Set<string>>(new Set());
   const liveAssistantId = ref<string | null>(null);
+  let pendingClientTurnTiming: ClientTurnTiming | null = null;
   let toolStatusTimer: ReturnType<typeof window.setTimeout> | null = null;
 
   function clearToolStatusTimer(): void {
@@ -126,9 +157,15 @@ export function useOrchestrationState() {
     return id;
   }
 
+  function setClientTurnTiming(timing: ClientTurnTiming | null): void {
+    pendingClientTurnTiming = timing;
+  }
+
   function clearSession(): void {
     clearToolStatusTimer();
     sessionLog.value = [];
+    turnProfile.value = null;
+    pendingClientTurnTiming = null;
     expandedIds.value = new Set();
     liveAssistantId.value = null;
     execution.value = createIdleExecution();
@@ -137,6 +174,8 @@ export function useOrchestrationState() {
   function resetExecution(): void {
     clearToolStatusTimer();
     liveAssistantId.value = null;
+    turnProfile.value = null;
+    pendingClientTurnTiming = null;
     execution.value = createIdleExecution();
   }
 
@@ -247,8 +286,10 @@ export function useOrchestrationState() {
     state.focusToolCallId = toolCallId;
 
     if (isEmitOutput(toolName)) {
+      state.emitOutputActive = true;
       setPhase(state, "speaking", "Speaking…");
       state.activeMcpTool = null;
+      syncNodeHighlights(state);
       return;
     }
 
@@ -277,9 +318,8 @@ export function useOrchestrationState() {
     const state = execution.value;
 
     if (isEmitOutput(toolName)) {
-      if (!state.emitOutputActive) {
-        setPhase(state, "thinking", "Agent deciding…");
-      }
+      state.emitOutputActive = true;
+      syncNodeHighlights(state);
       return;
     }
 
@@ -323,6 +363,8 @@ export function useOrchestrationState() {
         }
         if (status === "speaking") {
           setPhase(state, "speaking", "Speaking…");
+          state.emitOutputActive = true;
+          syncNodeHighlights(state);
         }
         if (status === "done") {
           setPhase(state, "done", "Listening…");
@@ -345,6 +387,8 @@ export function useOrchestrationState() {
         addLogItem({ kind: "user", text: String(data.text ?? "") });
         return null;
       case "assistant_caption_delta":
+        state.emitOutputActive = true;
+        syncNodeHighlights(state);
         appendLiveAssistant(String(data.delta ?? ""));
         return null;
       case "assistant_text_final":
@@ -382,6 +426,13 @@ export function useOrchestrationState() {
         });
         return toolCallId;
       }
+      case "turn_profile":
+        turnProfile.value = mergeClientTurnTiming(
+          parseTurnProfile(data),
+          pendingClientTurnTiming,
+        );
+        pendingClientTurnTiming = null;
+        return null;
       case "error": {
         const message = String(data.message ?? "Unexpected error");
         addLogItem({ kind: "error", text: message });
@@ -399,6 +450,8 @@ export function useOrchestrationState() {
   return {
     sessionLog,
     execution,
+    turnProfile,
+    setClientTurnTiming,
     expandedIds,
     liveAssistantId,
     addLogItem,

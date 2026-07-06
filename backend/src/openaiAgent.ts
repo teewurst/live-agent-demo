@@ -12,7 +12,7 @@ import {
   describeValidateArgsForGate,
 } from "./crmDemoData.js";
 import { AppError, isAbortError } from "./errors.js";
-import { speakText } from "./speechStreamer.js";
+import { scheduleSpeakText, speakText } from "./speechStreamer.js";
 import type { SpeechSequence } from "./speechStreamer.js";
 import { executeBackendTool, GET_CUSTOMER_INFORMATION_TOOL } from "./toolExecutor.js";
 import {
@@ -30,6 +30,8 @@ import { summarizeToolResult } from "./toolResultUtils.js";
 import { writeEvent } from "./sse.js";
 import type { ChatMessage, EmitOutputArgs, SessionState } from "./types.js";
 import { AgentTurnLogger } from "./agentTurnLogger.js";
+import { speakBackendToolPreamble } from "./toolLookupPreamble.js";
+import type { TurnProfiler } from "./turnProfiler.js";
 
 const openai = new OpenAI({
   apiKey: config.OPENAI_API_KEY,
@@ -43,10 +45,13 @@ type RunAgentTurnOptions = {
   signal: AbortSignal;
   sequence: SpeechSequence;
   logger?: AgentTurnLogger;
+  profiler?: TurnProfiler;
+  pendingSpeech: Promise<void>[];
 };
 
 type TurnSpeechState = {
   lastSpokenMessage: string;
+  lastPreambleMessage: string;
   researchCalled: boolean;
 };
 
@@ -163,7 +168,14 @@ async function handleEmitOutput(
   }
 
   speechState.lastSpokenMessage = message;
-  await speakText(options.res, message, options.signal, options.sequence);
+  const spoken = scheduleSpeakText(
+    options.res,
+    message,
+    options.signal,
+    options.sequence,
+    options.pendingSpeech,
+    options.profiler,
+  );
 
   addMessage(options.session, "assistant", message);
   addTimelineItem(options.session, {
@@ -182,7 +194,7 @@ async function handleEmitOutput(
     });
   }
 
-  return { ok: true, is_final: Boolean(args.is_final), spoken: true };
+  return { ok: true, is_final: Boolean(args.is_final), spoken };
 }
 
 function skippedToolResult(reason: string): string {
@@ -195,8 +207,13 @@ export type AgentTurnResult = {
 };
 
 export async function runAgentTurn(options: RunAgentTurnOptions): Promise<AgentTurnResult> {
-  const { session, userText, signal, logger } = options;
-  const speechState: TurnSpeechState = { lastSpokenMessage: "", researchCalled: false };
+  const { session, userText, signal, logger, profiler } = options;
+  const pendingSpeech = options.pendingSpeech;
+  const speechState: TurnSpeechState = {
+    lastSpokenMessage: "",
+    lastPreambleMessage: "",
+    researchCalled: false,
+  };
   const agentTools = await ensureAgentTools(session, signal);
   const discoveredToolNames = agentTools
     .filter((tool) => tool.type === "function" && tool.function.name !== EMIT_OUTPUT_TOOL)
@@ -239,6 +256,9 @@ export async function runAgentTurn(options: RunAgentTurnOptions): Promise<AgentT
 
     logger?.log("llm_request", { step, messageCount: messages.length });
 
+    const llmSpanId = `llm-${step}`;
+    profiler?.startSpan(llmSpanId, "agent_llm", "LLM API", `step ${step + 1}`);
+
     const completion = await openai.chat.completions.create(
       {
         model: config.OPENAI_AGENT_MODEL,
@@ -249,6 +269,8 @@ export async function runAgentTurn(options: RunAgentTurnOptions): Promise<AgentT
       },
       { signal },
     );
+
+    profiler?.endSpan(llmSpanId);
 
     const assistantMessage = completion.choices[0]?.message;
     if (!assistantMessage) {
@@ -435,6 +457,15 @@ export async function runAgentTurn(options: RunAgentTurnOptions): Promise<AgentT
         status: "running",
       });
 
+      speechState.lastPreambleMessage = speakBackendToolPreamble(
+        options,
+        toolName,
+        speechState.lastPreambleMessage,
+      );
+
+      const toolSpanId = `tool-${toolCallId}`;
+      profiler?.startSpan(toolSpanId, "tool", toolName);
+
       const toolResult = await executeBackendTool(
         session,
         toolName,
@@ -442,6 +473,8 @@ export async function runAgentTurn(options: RunAgentTurnOptions): Promise<AgentT
         userText,
         signal,
       );
+
+      profiler?.endSpan(toolSpanId);
 
       if (signal.aborted) {
         break;
@@ -534,6 +567,12 @@ export async function runAgentTurn(options: RunAgentTurnOptions): Promise<AgentT
 
     const fallbackToolCallId = uuidv4();
     const fallbackArgs = { lookup: "latest_invoice" };
+    speechState.lastPreambleMessage = speakBackendToolPreamble(
+      options,
+      GET_CUSTOMER_INFORMATION_TOOL,
+      speechState.lastPreambleMessage,
+    );
+    profiler?.startSpan("tool-fallback", "tool", GET_CUSTOMER_INFORMATION_TOOL, "fallback");
     const toolResult = await executeBackendTool(
       session,
       GET_CUSTOMER_INFORMATION_TOOL,
@@ -541,6 +580,7 @@ export async function runAgentTurn(options: RunAgentTurnOptions): Promise<AgentT
       userText,
       signal,
     );
+    profiler?.endSpan("tool-fallback");
     speechState.researchCalled = true;
 
     logger?.log("research_fallback_result", {
@@ -561,6 +601,8 @@ export async function runAgentTurn(options: RunAgentTurnOptions): Promise<AgentT
     if (!signal.aborted) {
       logger?.log("llm_request", { step: "fallback_emit", messageCount: messages.length });
 
+      profiler?.startSpan("llm-fallback", "agent_llm", "LLM API", "fallback emit");
+
       const completion = await openai.chat.completions.create(
         {
           model: config.OPENAI_AGENT_MODEL,
@@ -571,6 +613,8 @@ export async function runAgentTurn(options: RunAgentTurnOptions): Promise<AgentT
         },
         { signal },
       );
+
+      profiler?.endSpan("llm-fallback");
 
       const assistantMessage = completion.choices[0]?.message;
       if (assistantMessage?.tool_calls?.length) {
@@ -612,6 +656,10 @@ export async function runAgentTurn(options: RunAgentTurnOptions): Promise<AgentT
     finalText: finalText.slice(0, 200),
     customerValidated: session.customerValidated,
   });
+
+  if (!signal.aborted) {
+    await Promise.allSettled(pendingSpeech);
+  }
 
   return { finalText, completed };
 }

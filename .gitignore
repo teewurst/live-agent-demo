@@ -4,6 +4,9 @@ dist/
 .env
 *.log
 logs/
+test-results/
+tests/fixtures/*.mp3
+.cache/
 .DS_Store
 coverage/
 .vite/

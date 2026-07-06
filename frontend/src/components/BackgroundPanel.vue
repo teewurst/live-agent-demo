@@ -2,12 +2,15 @@
 import { computed, nextTick, ref, watch } from "vue";
 import type { ToolBackendMode } from "../api/client";
 import type { ExecutionState, TimelineItem } from "../types/orchestration";
+import type { TurnProfile } from "../types/turnProfile";
 import { formatJson, summarizeTimelineLine } from "../utils/timelineSummary";
 import ArchitectureGraph from "./ArchitectureGraph.vue";
+import TurnProfilePanel from "./TurnProfilePanel.vue";
 
 const props = defineProps<{
   items: TimelineItem[];
   execution: ExecutionState;
+  turnProfile: TurnProfile | null;
   expandedIds: Set<string>;
   toolBackendMode: ToolBackendMode;
 }>();
@@ -115,6 +118,8 @@ watch(
         :tool-backend-mode="toolBackendMode"
         @focus-tool="onGraphFocusTool"
       />
+
+      <TurnProfilePanel :profile="turnProfile" />
 
       <div class="timeline-section">
         <div class="timeline-section-header">

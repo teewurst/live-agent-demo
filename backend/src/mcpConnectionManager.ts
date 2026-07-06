@@ -2,6 +2,10 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { isAbortError } from "./errors.js";
+import {
+  getCachedMcpDiscovery,
+  setCachedMcpDiscovery,
+} from "./mcpDiscoveryCache.js";
 
 export type McpCallResult =
   | { status: "success"; result: unknown }
@@ -170,6 +174,11 @@ export async function discoverMcpTools(
   serverUrls: string[],
   signal?: AbortSignal,
 ): Promise<DiscoveredMcpTool[]> {
+  const cached = getCachedMcpDiscovery(serverUrls);
+  if (cached) {
+    return cached;
+  }
+
   const discovered: DiscoveredMcpTool[] = [];
   const seen = new Set<string>();
 
@@ -190,6 +199,7 @@ export async function discoverMcpTools(
     }
   }
 
+  setCachedMcpDiscovery(serverUrls, discovered);
   return discovered;
 }
 

@@ -12,7 +12,7 @@ const envSchema = z.object({
   OPENAI_TTS_MODEL: z.string().default("gpt-4o-mini-tts-2025-03-20"),
   OPENAI_TTS_VOICE: z.string().default("shimmer"),
   OPENAI_TTS_FORMAT: z.enum(["mp3", "wav", "opus", "aac", "flac", "pcm"]).default("mp3"),
-  OPENAI_AGENT_MODEL: z.string().default("gpt-4.1-mini"),
+  OPENAI_AGENT_MODEL: z.string().default("gpt-5.4-nano"),
   AGENT_MAX_TOOL_CALLS: z.coerce.number().default(8),
   AGENT_LOG_ENABLED: z
     .string()

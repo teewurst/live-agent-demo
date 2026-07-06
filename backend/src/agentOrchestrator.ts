@@ -11,12 +11,14 @@ import {
 } from "./sessions.js";
 import { closeSse, writeEvent } from "./sse.js";
 import type { SessionState } from "./types.js";
+import { TurnProfiler } from "./turnProfiler.js";
 
 type ProcessTextTurnOptions = {
   session: SessionState;
   res: Response;
   userText: string;
   signal: AbortSignal;
+  profiler?: TurnProfiler;
 };
 
 export async function processTextTurn({
@@ -24,6 +26,7 @@ export async function processTextTurn({
   res,
   userText,
   signal,
+  profiler: externalProfiler,
 }: ProcessTextTurnOptions): Promise<void> {
   const transcript = userText.trim();
   if (!transcript) {
@@ -31,6 +34,7 @@ export async function processTextTurn({
   }
 
   const sequence = createSpeechSequence();
+  const profiler = externalProfiler ?? new TurnProfiler();
 
   try {
     writeEvent(res, "user_transcript", { text: transcript });
@@ -46,6 +50,7 @@ export async function processTextTurn({
     const logger = new AgentTurnLogger(session.id, session.turnCounter);
     console.info(`[agent] turn log: ${logger.logFilePath}`);
 
+    const pendingSpeech: Promise<void>[] = [];
     const { finalText, completed } = await runAgentTurn({
       session,
       res,
@@ -53,6 +58,8 @@ export async function processTextTurn({
       signal,
       sequence,
       logger,
+      profiler,
+      pendingSpeech,
     });
 
     if (signal.aborted) {
@@ -65,6 +72,10 @@ export async function processTextTurn({
     if (finalText.trim()) {
       writeEvent(res, "assistant_text_final", { text: finalText });
     }
+
+    const profile = profiler.finish(session.turnCounter);
+    writeEvent(res, "turn_profile", profile);
+    logger?.log("turn_profile", profile as unknown as Record<string, unknown>);
 
     writeEvent(res, "status", { state: completed ? "done" : "done" });
     closeSse(res);
