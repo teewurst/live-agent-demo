@@ -16,8 +16,7 @@ const MCP_TOOLS = new Set<McpToolId>([
 
 const TOOL_STATUS_HOLD_MS = 1000;
 
-const AGENT_BUSY_PHASES: ExecutionState["phase"][] = [
-  "transcribing",
+const AGENT_WORK_PHASES: ExecutionState["phase"][] = [
   "thinking",
   "waiting_mcp",
   "waiting_tool",
@@ -48,18 +47,40 @@ function syncMcpHostActive(state: ExecutionState): void {
   state.mcpHostActive = toolLit || state.phase === "waiting_mcp";
 }
 
+function syncNodeHighlights(state: ExecutionState): void {
+  const inactivePhase =
+    state.paused ||
+    state.phase === "idle" ||
+    state.phase === "interrupted" ||
+    state.phase === "error";
+
+  if (inactivePhase) {
+    state.callerActive = false;
+    state.middlewareActive = false;
+    state.agentActive = false;
+    return;
+  }
+
+  const transcribing = state.phase === "transcribing";
+  state.callerActive = transcribing;
+  state.middlewareActive = transcribing;
+  state.agentActive =
+    !state.showWaiting &&
+    (AGENT_WORK_PHASES.includes(state.phase) || state.emitOutputActive);
+}
+
 function syncAgentWaiting(state: ExecutionState): void {
-  const agentBusy =
-    state.emitOutputActive || AGENT_BUSY_PHASES.includes(state.phase);
-  state.showWaiting = !state.paused && state.phase === "done" && !agentBusy;
+  const turnInProgress =
+    state.emitOutputActive ||
+    state.phase === "transcribing" ||
+    AGENT_WORK_PHASES.includes(state.phase);
+  state.showWaiting = !state.paused && state.phase === "done" && !turnInProgress;
+  syncNodeHighlights(state);
 }
 
 function setPhase(state: ExecutionState, phase: ExecutionState["phase"], waitingLabel = ""): void {
   state.phase = phase;
   state.waitingLabel = waitingLabel;
-  state.callerActive = phase === "transcribing";
-  state.middlewareActive = !state.paused && phase !== "idle";
-  state.agentActive = ["thinking", "waiting_mcp", "waiting_tool", "speaking"].includes(phase);
   syncMcpHostActive(state);
   syncAgentWaiting(state);
 }
@@ -119,23 +140,42 @@ export function useOrchestrationState() {
     execution.value = createIdleExecution();
   }
 
+  function setGraphIdle(): void {
+    clearToolStatusTimer();
+    const state = execution.value;
+    state.phase = "idle";
+    state.paused = false;
+    state.waitingLabel = "";
+    state.showWaiting = false;
+    state.emitOutputActive = false;
+    state.mcpHostActive = false;
+    state.activeMcpTool = null;
+    for (const toolId of MCP_TOOLS) {
+      state.toolStates[toolId] = idleToolState(state, toolId);
+    }
+    syncNodeHighlights(state);
+  }
+
   function setOutputPlaybackActive(active: boolean): void {
     execution.value.emitOutputActive = active;
     syncAgentWaiting(execution.value);
   }
 
-  function setAgentListening(): void {
+  function onPlaybackEnded(): void {
     const state = execution.value;
-    if (state.paused) {
-      return;
+    state.emitOutputActive = false;
+    if (
+      !state.paused &&
+      (state.phase === "done" || state.phase === "speaking")
+    ) {
+      state.phase = "done";
+      state.waitingLabel = "Listening…";
     }
-    if (AGENT_BUSY_PHASES.includes(state.phase)) {
-      return;
-    }
-    state.phase = "done";
-    state.waitingLabel = "Listening…";
-    state.agentActive = false;
     syncAgentWaiting(state);
+  }
+
+  function setAgentListening(): void {
+    onPlaybackEnded();
   }
 
   function markInterrupted(): void {
@@ -147,6 +187,7 @@ export function useOrchestrationState() {
     state.mcpHostActive = false;
     state.activeMcpTool = null;
     state.phase = "interrupted";
+    syncAgentWaiting(state);
     if (liveAssistantId.value) {
       const message = sessionLog.value.find((item) => item.id === liveAssistantId.value);
       if (message) {
@@ -296,6 +337,7 @@ export function useOrchestrationState() {
           state.phase = "error";
           state.paused = true;
           state.showWaiting = false;
+          syncNodeHighlights(state);
         }
         return null;
       }
@@ -346,6 +388,7 @@ export function useOrchestrationState() {
         state.phase = "error";
         state.paused = true;
         state.showWaiting = false;
+        syncNodeHighlights(state);
         return message;
       }
       default:
@@ -361,8 +404,10 @@ export function useOrchestrationState() {
     addLogItem,
     clearSession,
     resetExecution,
+    setGraphIdle,
     markInterrupted,
     setOutputPlaybackActive,
+    onPlaybackEnded,
     setAgentListening,
     toggleExpanded,
     focusToolCall,

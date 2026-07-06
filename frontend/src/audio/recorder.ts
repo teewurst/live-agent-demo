@@ -11,21 +11,13 @@ const VAD_ASSET_PATH = "/vad/";
 const MIN_SPEECH_MS_IDLE = 300;
 const VAD_REDEMPTION_MS = 1600;
 const VAD_PRE_SPEECH_PAD_MS = 450;
-const PLAYBACK_BARGE_IN_MS = 800;
-const MS_PER_VAD_FRAME = 32;
-const BARGE_IN_FRAME_STREAK = Math.ceil(PLAYBACK_BARGE_IN_MS / MS_PER_VAD_FRAME);
-const PLAYBACK_VAD_THRESHOLD = 0.5;
-const PLAYBACK_RMS_BASELINE_EMA = 0.92;
-const PLAYBACK_RMS_SPIKE_MULT = 2.2;
-const PLAYBACK_RMS_MIN_SPIKE = 0.035;
 
-function frameRms(frame: Float32Array): number {
-  let sum = 0;
-  for (let i = 0; i < frame.length; i += 1) {
-    sum += frame[i] * frame[i];
-  }
-  return Math.sqrt(sum / frame.length);
-}
+/** Sustained speech required to interrupt agent playback. */
+const PLAYBACK_BARGE_IN_MS = 2000;
+/** Brief pauses inside one utterance do not reset the timer. */
+const PLAYBACK_BARGE_GAP_MS = 450;
+const MS_PER_VAD_FRAME = 32;
+const PLAYBACK_SPEECH_THRESHOLD = 0.38;
 
 export class UtteranceRecorder {
   private micVad: MicVAD | null = null;
@@ -33,10 +25,11 @@ export class UtteranceRecorder {
   private playbackActive = false;
   private discardNextSpeechEnd = false;
   private bargeInArmed = false;
-  private bargeInFrameStreak = 0;
-  private playbackMicBaseline = 0.01;
+  private bargeInSpeechMs = 0;
+  private bargeInLastSpeechAt = 0;
   private lastSpeechLevel = 0;
   private speaking = false;
+  private pendingSpeechEnd: Float32Array | null = null;
 
   constructor(private readonly callbacks: RecorderCallbacks = {}) {}
 
@@ -108,13 +101,13 @@ export class UtteranceRecorder {
           if (!this.playbackActive || this.bargeInArmed) {
             return;
           }
-          this.bargeInFrameStreak = 0;
+          this.resetBargeInTimer();
           this.speaking = false;
         },
-        onFrameProcessed: (probs, frame) => {
+        onFrameProcessed: (probs) => {
           this.lastSpeechLevel = probs.isSpeech;
           this.callbacks.onLevel?.(probs.isSpeech);
-          this.trackPlaybackBargeIn(probs.isSpeech, frame);
+          this.trackPlaybackBargeIn(probs.isSpeech);
         },
       });
 
@@ -154,60 +147,87 @@ export class UtteranceRecorder {
     this.discardNextSpeechEnd = true;
     this.speaking = false;
     this.bargeInArmed = false;
-    this.bargeInFrameStreak = 0;
+    this.resetBargeInTimer();
   }
 
   getLevel(): number {
     return this.lastSpeechLevel;
   }
 
+  resetCaptureState(): void {
+    this.pendingSpeechEnd = null;
+    this.discardNextSpeechEnd = false;
+    this.bargeInArmed = false;
+    this.resetBargeInTimer();
+    this.speaking = false;
+  }
+
   setPlaybackActive(active: boolean): void {
+    const wasActive = this.playbackActive;
     this.playbackActive = active;
     if (active) {
-      this.resetPlaybackBargeInState();
+      if (!wasActive) {
+        this.pendingSpeechEnd = null;
+        this.resetPlaybackBargeInState();
+      }
+      return;
     }
+    if (wasActive) {
+      this.flushPendingSpeechEnd();
+    }
+  }
+
+  private flushPendingSpeechEnd(): void {
+    if (!this.pendingSpeechEnd) {
+      return;
+    }
+    const audio = this.pendingSpeechEnd;
+    this.pendingSpeechEnd = null;
+    this.bargeInArmed = false;
+    const wavBuffer = utils.encodeWAV(audio);
+    const blob = new Blob([wavBuffer], { type: "audio/wav" });
+    this.callbacks.onSpeechEnd?.(blob);
+  }
+
+  private resetBargeInTimer(): void {
+    this.bargeInSpeechMs = 0;
+    this.bargeInLastSpeechAt = 0;
   }
 
   private resetPlaybackBargeInState(): void {
     this.bargeInArmed = false;
-    this.bargeInFrameStreak = 0;
-    this.playbackMicBaseline = 0.01;
+    this.resetBargeInTimer();
   }
 
   /**
-   * During agent playback, ignore Silero-only triggers (agent echo) and require a
-   * sustained mic-energy spike above the rolling baseline (user talking over Helen).
+   * During agent playback, require ~2s of sustained VAD speech before interrupt.
+   * Short blips ("Ja", clicks) reset via the gap window and do not interrupt.
    */
-  private trackPlaybackBargeIn(isSpeech: number, frame: Float32Array): void {
+  private trackPlaybackBargeIn(isSpeech: number): void {
     if (!this.playbackActive || this.bargeInArmed) {
       return;
     }
 
-    const micRms = frameRms(frame);
+    const now = Date.now();
+    const speechLike = isSpeech >= PLAYBACK_SPEECH_THRESHOLD;
 
-    if (isSpeech < 0.3) {
-      this.playbackMicBaseline =
-        this.playbackMicBaseline * PLAYBACK_RMS_BASELINE_EMA +
-        micRms * (1 - PLAYBACK_RMS_BASELINE_EMA);
+    if (speechLike) {
+      const gap = this.bargeInLastSpeechAt > 0 ? now - this.bargeInLastSpeechAt : 0;
+      if (this.bargeInSpeechMs > 0 && gap > PLAYBACK_BARGE_GAP_MS) {
+        this.bargeInSpeechMs = MS_PER_VAD_FRAME;
+      } else {
+        this.bargeInSpeechMs += MS_PER_VAD_FRAME;
+      }
+      this.bargeInLastSpeechAt = now;
+    } else if (this.bargeInSpeechMs > 0 && now - this.bargeInLastSpeechAt > PLAYBACK_BARGE_GAP_MS) {
+      this.resetBargeInTimer();
     }
 
-    const spikeThreshold = Math.max(
-      this.playbackMicBaseline * PLAYBACK_RMS_SPIKE_MULT,
-      PLAYBACK_RMS_MIN_SPIKE,
-    );
-    const userLikelySpeaking = isSpeech >= PLAYBACK_VAD_THRESHOLD && micRms >= spikeThreshold;
-
-    if (userLikelySpeaking) {
-      this.bargeInFrameStreak += 1;
-    } else {
-      this.bargeInFrameStreak = 0;
-    }
-
-    if (this.bargeInFrameStreak < BARGE_IN_FRAME_STREAK) {
+    if (this.bargeInSpeechMs < PLAYBACK_BARGE_IN_MS) {
       return;
     }
 
-    this.bargeInFrameStreak = 0;
+    this.resetBargeInTimer();
     this.bargeInArmed = true;
     this.speaking = true;
     this.callbacks.onSpeechStart?.();
@@ -223,6 +243,7 @@ export class UtteranceRecorder {
     }
 
     if (this.playbackActive && !this.bargeInArmed) {
+      this.resetBargeInTimer();
       return;
     }
 

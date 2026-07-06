@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Handle, Position, type NodeProps } from "@vue-flow/core";
-import { inject } from "vue";
-import type { McpToolId, ToolNodeState } from "../../types/orchestration";
+import { computed, inject, type ComputedRef } from "vue";
+import type { ExecutionState, McpToolId, ToolNodeState } from "../../types/orchestration";
 
 export type ArchNodeData = {
   kind: "caller" | "middleware" | "agent" | "waiting" | "emit" | "mcp-host";
@@ -23,9 +23,58 @@ export type ArchNodeData = {
   }[];
 };
 
-defineProps<NodeProps<ArchNodeData>>();
+const props = defineProps<NodeProps<ArchNodeData>>();
 
 const focusTool = inject<(name: string) => void>("archFocusTool");
+const execution = inject<ComputedRef<ExecutionState>>("archExecution");
+
+const nodeActive = computed(() => {
+  const ex = execution?.value;
+  if (!ex) {
+    return Boolean(props.data.active);
+  }
+  switch (props.data.kind) {
+    case "caller":
+      return ex.callerActive;
+    case "middleware":
+      return ex.middlewareActive;
+    case "agent":
+      return ex.agentActive;
+    case "waiting":
+      return ex.showWaiting;
+    case "emit":
+      return ex.emitOutputActive;
+    case "mcp-host":
+      return ex.mcpHostActive;
+    default:
+      return Boolean(props.data.active);
+  }
+});
+
+const nodePulse = computed(() => {
+  const ex = execution?.value;
+  if (props.data.kind === "waiting") {
+    return ex?.showWaiting ?? Boolean(props.data.pulse);
+  }
+  if (props.data.kind === "mcp-host") {
+    return Boolean(ex?.activeMcpTool);
+  }
+  if (
+    props.data.kind === "caller" ||
+    props.data.kind === "middleware" ||
+    props.data.kind === "agent"
+  ) {
+    return nodeActive.value;
+  }
+  return Boolean(props.data.pulse);
+});
+
+const nodeGlow = computed(() => {
+  if (props.data.kind === "emit") {
+    return execution?.value.emitOutputActive ?? Boolean(props.data.glow);
+  }
+  return Boolean(props.data.glow);
+});
 
 function toolClass(
   state: ToolNodeState,
@@ -60,9 +109,9 @@ function onToolClick(toolId: McpToolId, state: ToolNodeState): void {
     :class="[
       `arch-flow-node--${data.kind}`,
       {
-        'arch-node--active': data.active,
-        'arch-node--pulse': data.pulse,
-        'arch-node--glow': data.glow,
+        'arch-node--active': nodeActive,
+        'arch-node--pulse': nodePulse,
+        'arch-node--glow': nodeGlow,
       },
     ]"
   >

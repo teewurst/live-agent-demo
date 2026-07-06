@@ -19,6 +19,11 @@ provide("archFocusTool", (toolName: string) => {
   emit("focusTool", toolName);
 });
 
+provide(
+  "archExecution",
+  computed(() => props.execution),
+);
+
 const nodeTypes = { arch: markRaw(ArchNode) };
 
 const mcpTools: { id: McpToolId; label: string }[] = [
@@ -140,6 +145,8 @@ function idleEdgeStyle(active: boolean, activeColor = "#60a5fa") {
 
 const edges = computed<Edge[]>(() => {
   const { execution } = props;
+  const emitLive = execution.emitOutputActive;
+  const waitingLive = execution.showWaiting;
   return [
     {
       id: "caller-middleware",
@@ -168,8 +175,8 @@ const edges = computed<Edge[]>(() => {
       sourceHandle: "out",
       targetHandle: "in",
       type: "straight",
-      animated: execution.showWaiting,
-      style: idleEdgeStyle(execution.showWaiting),
+      animated: waitingLive,
+      style: idleEdgeStyle(waitingLive),
     },
     {
       id: "agent-mcp",
@@ -188,11 +195,8 @@ const edges = computed<Edge[]>(() => {
       sourceHandle: "down-emit",
       targetHandle: "in",
       type: "step",
-      animated: execution.emitOutputActive,
-      style: idleEdgeStyle(
-        execution.emitOutputActive,
-        execution.emitOutputActive ? "#a78bfa" : IDLE_EDGE,
-      ),
+      animated: emitLive,
+      style: idleEdgeStyle(emitLive, emitLive ? "#a78bfa" : IDLE_EDGE),
     },
   ];
 });

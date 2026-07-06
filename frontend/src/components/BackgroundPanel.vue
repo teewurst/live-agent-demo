@@ -21,6 +21,11 @@ const feedEl = ref<HTMLElement | null>(null);
 const followNewest = ref(true);
 const SCROLL_PIN_THRESHOLD = 32;
 
+function feedContainer(): HTMLElement | null {
+  const el = feedEl.value;
+  return el instanceof HTMLElement ? el : null;
+}
+
 const displayItems = computed(() => [...props.items].reverse());
 
 function isExpanded(id: string): boolean {
@@ -36,7 +41,7 @@ function hasFullDetail(item: TimelineItem): boolean {
 }
 
 function isPinnedToNewest(): boolean {
-  const el = feedEl.value;
+  const el = feedContainer();
   if (!el) {
     return true;
   }
@@ -44,7 +49,7 @@ function isPinnedToNewest(): boolean {
 }
 
 function scrollToNewest(behavior: ScrollBehavior = "smooth"): void {
-  feedEl.value?.scrollTo({ top: 0, behavior });
+  feedContainer()?.scrollTo({ top: 0, behavior });
 }
 
 function jumpToNewest(): void {
@@ -58,7 +63,7 @@ function onFeedScroll(): void {
 
 async function scrollToToolCall(toolCallId: string): Promise<void> {
   await nextTick();
-  const el = feedEl.value?.querySelector(`[data-tool-call-id="${toolCallId}"]`);
+  const el = feedContainer()?.querySelector(`[data-tool-call-id="${toolCallId}"]`);
   if (el instanceof HTMLElement) {
     el.scrollIntoView({ behavior: "smooth", block: "nearest" });
     el.classList.add("timeline-item--highlight");
@@ -128,14 +133,13 @@ watch(
           No activity yet. Start a call or use debug mode.
         </div>
 
-        <TransitionGroup
+        <div
           v-else
           ref="feedEl"
-          name="timeline-slide"
-          tag="div"
           class="timeline-feed timeline-feed--compact"
           @scroll="onFeedScroll"
         >
+          <TransitionGroup name="timeline-slide" tag="div">
           <div
             v-for="item in displayItems"
             :key="item.id"
@@ -165,7 +169,8 @@ watch(
               <div v-if="item.status" class="timeline-status">Status: {{ item.status }}</div>
             </div>
           </div>
-        </TransitionGroup>
+          </TransitionGroup>
+        </div>
       </div>
     </div>
   </aside>

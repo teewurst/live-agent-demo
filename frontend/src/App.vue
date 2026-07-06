@@ -43,9 +43,10 @@ const {
   liveAssistantId,
   clearSession,
   resetExecution,
+  setGraphIdle,
   markInterrupted,
   setOutputPlaybackActive,
-  setAgentListening,
+  onPlaybackEnded,
   toggleExpanded,
   focusToolCall,
   handleSseEvent: handleOrchestrationEvent,
@@ -57,9 +58,7 @@ const toolBackendMode = ref<ToolBackendMode>(
 let utteranceAbort: AbortController | null = null;
 let turnCounter = 0;
 let acceptAudioSegments = true;
-let greetingInProgress = false;
-let openingPlaybackStarted = false;
-let openingPlaybackFailed = false;
+let pendingUtterance: Blob | null = null;
 
 const debugMessages = [
   "I need my invoice number.",
@@ -72,22 +71,20 @@ const playbackQueue = new PlaybackQueue({
   onPlaybackStart: () => {
     recorder.setPlaybackActive(true);
     setOutputPlaybackActive(true);
-    if (greetingInProgress) {
-      openingPlaybackStarted = true;
-    }
     if (callState.value !== "recording") {
       callState.value = "speaking";
     }
   },
   onPlaybackError: () => {
-    if (greetingInProgress) {
-      openingPlaybackFailed = true;
+    if (callState.value === "connecting") {
+      errorMessage.value =
+        "Audio playback was blocked by the browser. Click the green button again or check autoplay settings.";
+      callState.value = "error";
     }
   },
   onQueueEmpty: () => {
     recorder.setPlaybackActive(false);
-    setOutputPlaybackActive(false);
-    setAgentListening();
+    onPlaybackEnded();
     if (["speaking", "thinking", "transcribing"].includes(callState.value)) {
       callState.value = "listening";
     }
@@ -126,11 +123,7 @@ async function handleSseEvent(event: SseEventName, data: Record<string, unknown>
       if (state === "thinking") callState.value = "thinking";
       if (state === "speaking") callState.value = "speaking";
       if (state === "done") {
-        if (greetingInProgress) {
-          callState.value = playbackQueue.isActive() ? "speaking" : callState.value;
-        } else {
-          callState.value = playbackQueue.isActive() ? "speaking" : "listening";
-        }
+        callState.value = playbackQueue.isActive() ? "speaking" : "listening";
       }
       if (state === "interrupted") callState.value = "listening";
       if (state === "error") callState.value = "error";
@@ -161,6 +154,7 @@ async function stopCallActivity(): Promise<void> {
   playbackQueue.clear();
   recorder.setPlaybackActive(false);
   setOutputPlaybackActive(false);
+  pendingUtterance = null;
 
   utteranceAbort?.abort();
   utteranceAbort = null;
@@ -185,6 +179,7 @@ async function stopCallActivity(): Promise<void> {
     recorder.stop();
     sessionId.value = null;
     callState.value = "idle";
+    setGraphIdle();
     return;
   }
 
@@ -217,8 +212,18 @@ function setToolBackendMode(mode: ToolBackendMode): void {
   localStorage.setItem("toolBackendMode", mode);
 }
 
+function flushPendingUtterance(): void {
+  if (!sessionId.value || !pendingUtterance) {
+    return;
+  }
+  const blob = pendingUtterance;
+  pendingUtterance = null;
+  void submitUtterance(blob);
+}
+
 async function submitUtterance(blob: Blob): Promise<void> {
   if (!sessionId.value) {
+    pendingUtterance = blob;
     return;
   }
 
@@ -295,20 +300,21 @@ async function submitDebugMessage(text: string): Promise<void> {
   }
 }
 
-async function connectCallLine(reopen = false): Promise<string | null> {
+async function openCallLine(reopen = false): Promise<string | null> {
   utteranceAbort?.abort();
   utteranceAbort = new AbortController();
   const activeSignal = utteranceAbort.signal;
   acceptAudioSegments = true;
-  greetingInProgress = true;
-  openingPlaybackStarted = false;
-  openingPlaybackFailed = false;
   callState.value = "connecting";
   liveAssistantId.value = null;
 
   let audioSegments = 0;
 
   const onStreamEvent = (event: SseEventName, data: Record<string, unknown>) => {
+    if (event === "session" && data.sessionId) {
+      sessionId.value = String(data.sessionId);
+      flushPendingUtterance();
+    }
     if (event === "audio_segment") {
       audioSegments += 1;
     }
@@ -329,26 +335,17 @@ async function connectCallLine(reopen = false): Promise<string | null> {
       return null;
     }
 
-    await playbackQueue.waitUntilIdle();
-    setAgentListening();
-
-    if (openingPlaybackFailed || !openingPlaybackStarted) {
-      errorMessage.value =
-        "Opening audio was blocked by the browser. Click the green button again or check autoplay settings.";
-      callState.value = "error";
-      return null;
-    }
-
+    sessionId.value = nextSessionId;
+    flushPendingUtterance();
     return nextSessionId;
   } catch (error) {
     if (activeSignal.aborted) {
-      return null;
+      return sessionId.value;
     }
     errorMessage.value = error instanceof Error ? error.message : "Failed to open call";
     callState.value = "error";
     return null;
   } finally {
-    greetingInProgress = false;
     if (!activeSignal.aborted) {
       utteranceAbort = null;
     }
@@ -357,6 +354,7 @@ async function connectCallLine(reopen = false): Promise<string | null> {
 
 async function startCall(): Promise<void> {
   errorMessage.value = null;
+  pendingUtterance = null;
   clearSession();
   turnCounter = 0;
 
@@ -365,18 +363,19 @@ async function startCall(): Promise<void> {
   try {
     await recorder.acquireMicrophone();
     const [id, listeningOk] = await Promise.all([
-      connectCallLine(),
+      openCallLine(),
       recorder.startListening(),
     ]);
-    if (!id || errorMessage.value) {
-      recorder.stop();
-      return;
-    }
     if (!listeningOk) {
       callState.value = "error";
       return;
     }
-    sessionId.value = id;
+    if (!id && !sessionId.value) {
+      recorder.stop();
+      return;
+    }
+    sessionId.value = id ?? sessionId.value;
+    flushPendingUtterance();
     if (!["recording", "speaking", "thinking", "transcribing"].includes(callState.value)) {
       callState.value = "listening";
     }
@@ -407,20 +406,21 @@ async function resetCall(): Promise<void> {
     try {
       await recorder.acquireMicrophone();
       const [id, listeningOk] = await Promise.all([
-        connectCallLine(Boolean(sessionId.value)),
+        openCallLine(Boolean(sessionId.value)),
         recorder.startListening(),
       ]);
-      if (!id || errorMessage.value) {
+      if (!listeningOk) {
+        callState.value = "error";
+        return;
+      }
+      if (!id && !sessionId.value) {
         recorder.stop();
         sessionId.value = null;
         callState.value = "error";
         return;
       }
-      if (!listeningOk) {
-        callState.value = "error";
-        return;
-      }
-      sessionId.value = id;
+      sessionId.value = id ?? sessionId.value;
+      flushPendingUtterance();
       if (!["recording", "speaking", "thinking", "transcribing"].includes(callState.value)) {
         callState.value = "listening";
       }
