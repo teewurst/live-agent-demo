@@ -28,9 +28,11 @@ runStatefulMcpHttpServer(port, "crm-mcp-mock", (server) => {
     "retrieve_information",
     {
       description:
-        "Semantic search over public Nexus ERP documentation: products, plans, billing, support, FAQ, guidelines, " +
-        "onboarding, integrations, compliance, SLA/incidents, upgrades, localization, security, partners. " +
-        "No authentication required. Does not return account-specific or personal data.",
+        "Semantic search over public Nexus ERP documentation (products, plans, billing, support, FAQ, security). " +
+        "No authentication. No account data. " +
+        "Answer facts and how-to only from returned excerpts. " +
+        "If resultCount is 0 or excerpts do not match: tell the caller it is not in the docs — do not say yes without content. " +
+        "Login password reset is portal self-service; guide only, never reset on the call.",
       inputSchema: {
         query: z.string().describe("Natural language question or keywords to search"),
         topic_group: z

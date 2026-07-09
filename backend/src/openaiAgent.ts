@@ -5,13 +5,10 @@ import {
   buildSessionContextPrompt,
   EMIT_OUTPUT_TOOL,
 } from "./agentTools.js";
-import { AGENT_SYSTEM_PROMPT } from "./agentPrompt.js";
+import { getAgentSystemPrompt } from "./agentPromptSelect.js";
 import { config } from "./config.js";
-import {
-  describeCustomerInfoArgsForGate,
-  describeValidateArgsForGate,
-} from "./crmDemoData.js";
 import { AppError, isAbortError } from "./errors.js";
+import { gateBackendTool } from "./toolGating.js";
 import { scheduleSpeakText, speakText } from "./speechStreamer.js";
 import type { SpeechSequence } from "./speechStreamer.js";
 import { executeBackendTool, GET_CUSTOMER_INFORMATION_TOOL } from "./toolExecutor.js";
@@ -30,7 +27,7 @@ import { summarizeToolResult } from "./toolResultUtils.js";
 import { writeEvent } from "./sse.js";
 import type { ChatMessage, EmitOutputArgs, SessionState } from "./types.js";
 import { AgentTurnLogger } from "./agentTurnLogger.js";
-import { speakBackendToolPreamble } from "./toolLookupPreamble.js";
+import { speakLookupPreambleOnce } from "./toolLookupPreamble.js";
 import type { TurnProfiler } from "./turnProfiler.js";
 
 const openai = new OpenAI({
@@ -52,6 +49,7 @@ type RunAgentTurnOptions = {
 type TurnSpeechState = {
   lastSpokenMessage: string;
   lastPreambleMessage: string;
+  lookupPreambleSpoken: boolean;
   researchCalled: boolean;
 };
 
@@ -100,57 +98,6 @@ function parseToolArguments(raw: string): Record<string, unknown> {
 
 function asString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
-}
-
-function gateBackendTool(
-  session: SessionState,
-  toolName: string,
-  toolArgs: Record<string, unknown>,
-): { allowed: true } | { allowed: false; result: unknown } {
-  if (isValidateTool(toolName)) {
-    const missing = describeValidateArgsForGate(toolArgs);
-    if (missing) {
-      return {
-        allowed: false,
-        result: {
-          error: "MISSING_CREDENTIALS",
-          message:
-            `Do not call validate_customer until the caller has provided ${missing}. ` +
-            "Preferred: customer_number + phone_password (auth_method phone_password). " +
-            "Alternative: customer_number + full_name + birth_date (auth_method name_birthdate). " +
-            "Ask for missing details with emit_output and is_final=true, then end the turn.",
-        },
-      };
-    }
-  }
-
-  if (isCustomerInfoTool(toolName)) {
-    if (!session.customerValidated || !session.customerNumber) {
-      return {
-        allowed: false,
-        result: {
-          error: "CUSTOMER_NOT_VALIDATED",
-          message:
-            "Validation is required before customer information lookup. Ask for credentials with emit_output (is_final=true) if needed.",
-        },
-      };
-    }
-
-    const missing = describeCustomerInfoArgsForGate(toolArgs);
-    if (missing) {
-      return {
-        allowed: false,
-        result: {
-          error: "MISSING_LOOKUP_ARGS",
-          message:
-            `get_customer_information requires a valid lookup enum${missing === "invoice_id" ? " and invoice_id when lookup is invoice_by_id" : ""}. ` +
-            "Do not use free-text queries.",
-        },
-      };
-    }
-  }
-
-  return { allowed: true };
 }
 
 async function handleEmitOutput(
@@ -212,6 +159,7 @@ export async function runAgentTurn(options: RunAgentTurnOptions): Promise<AgentT
   const speechState: TurnSpeechState = {
     lastSpokenMessage: "",
     lastPreambleMessage: "",
+    lookupPreambleSpoken: false,
     researchCalled: false,
   };
   const agentTools = await ensureAgentTools(session, signal);
@@ -222,10 +170,11 @@ export async function runAgentTurn(options: RunAgentTurnOptions): Promise<AgentT
   const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
     {
       role: "system",
-      content: `${AGENT_SYSTEM_PROMPT}\n\n${buildSessionContextPrompt({
+      content: `${getAgentSystemPrompt(session.agentPromptVariant)}\n\n${buildSessionContextPrompt({
         customerValidated: session.customerValidated,
         customerNumber: session.customerNumber,
         toolBackendMode: session.toolBackendMode,
+        agentPromptVariant: session.agentPromptVariant,
         discoveredToolNames,
       })}`,
     },
@@ -457,11 +406,7 @@ export async function runAgentTurn(options: RunAgentTurnOptions): Promise<AgentT
         status: "running",
       });
 
-      speechState.lastPreambleMessage = speakBackendToolPreamble(
-        options,
-        toolName,
-        speechState.lastPreambleMessage,
-      );
+      speakLookupPreambleOnce(options, toolName, speechState);
 
       const toolSpanId = `tool-${toolCallId}`;
       profiler?.startSpan(toolSpanId, "tool", toolName);
@@ -527,6 +472,7 @@ export async function runAgentTurn(options: RunAgentTurnOptions): Promise<AgentT
           customerValidated: session.customerValidated,
           customerNumber: session.customerNumber,
           toolBackendMode: session.toolBackendMode,
+          agentPromptVariant: session.agentPromptVariant,
           discoveredToolNames,
         }),
       });
@@ -540,8 +486,10 @@ export async function runAgentTurn(options: RunAgentTurnOptions): Promise<AgentT
           role: "system",
           content:
             "Validation succeeded. Call get_customer_information only if the caller already asked for specific account data in this turn. " +
-            "If they only greeted you or supplied credentials without a concrete request, thank them, confirm validation briefly, and ask what they need (emit_output, is_final=true). " +
-            "When you do look up data, use the single smallest lookup that answers their question — never dump full account history unprompted.",
+            "If they asked for multiple account facts (e.g. invoice and subscription), call get_customer_information for each needed lookup in the same step — the system speaks one hold line for the whole lookup phase. " +
+            "Then one emit_output that answers everything together (is_final=true). " +
+            "If they only supplied credentials without a concrete request, thank them, confirm validation briefly, and ask what they need (emit_output, is_final=true). " +
+            "When you do look up data, use the smallest lookups that answer the question — never dump full account history unprompted.",
         });
         logger?.log("validation_nudge", { customerNumber: session.customerNumber });
       }
@@ -567,11 +515,7 @@ export async function runAgentTurn(options: RunAgentTurnOptions): Promise<AgentT
 
     const fallbackToolCallId = uuidv4();
     const fallbackArgs = { lookup: "latest_invoice" };
-    speechState.lastPreambleMessage = speakBackendToolPreamble(
-      options,
-      GET_CUSTOMER_INFORMATION_TOOL,
-      speechState.lastPreambleMessage,
-    );
+    speakLookupPreambleOnce(options, GET_CUSTOMER_INFORMATION_TOOL, speechState);
     profiler?.startSpan("tool-fallback", "tool", GET_CUSTOMER_INFORMATION_TOOL, "fallback");
     const toolResult = await executeBackendTool(
       session,

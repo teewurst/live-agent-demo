@@ -31,7 +31,7 @@ after(async () => {
 
 test("mock benchmark scenario produces deterministic tool flow and report", async () => {
   const sessionId = await createSession(backend.baseUrl);
-  const events = await runDebugTurn(
+  const { events } = await runDebugTurn(
     backend.baseUrl,
     sessionId,
     STANDARD_SCENARIO.input,

@@ -14,8 +14,11 @@ export const LOCAL_BACKEND_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: RETRIEVE_INFORMATION_TOOL,
       description:
-        "Semantic search over public ERP documentation: products, plans, billing guidelines, support, FAQ. " +
-        "No authentication required. No account or personal data.",
+        "Search public documentation only (products, plans, billing, support hours, FAQ, security policy). " +
+        "No authentication. Does not access account data. " +
+        "Use for facts and how-to guides when steps exist in the excerpts. " +
+        "If resultCount is 0 or excerpts do not answer the question: say you could not find it in the docs — do not claim you can help. " +
+        "Login password reset is self-service in the portal; guide from docs, never reset on the call.",
       parameters: {
         type: "object",
         properties: {
@@ -39,9 +42,8 @@ export const LOCAL_BACKEND_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: VALIDATE_CUSTOMER_TOOL,
       description:
-        "Verify the caller before any account-specific lookup. Always requires customer_number. " +
-        "Preferred method: auth_method=phone_password with phone_password. " +
-        "Alternative: auth_method=name_birthdate with full_name and birth_date (YYYY-MM-DD).",
+        "Verify the caller before account lookups. System will say you are verifying first. " +
+        "Requires customer_number. Preferred: phone_password. Alternative: name + birth_date.",
       parameters: {
         type: "object",
         properties: {
@@ -67,9 +69,8 @@ export const LOCAL_BACKEND_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: GET_CUSTOMER_INFORMATION_TOOL,
       description:
-        "Account lookup after validate_customer succeeded. Never returns phone password or identity markers. " +
-        "Lookups: account_profile, subscription_details, latest_invoice, invoice_by_id, list_invoices, " +
-        "open_invoices, overdue_invoices, billing_contact.",
+        "Account data after validate_customer. System will say you are loading account records. " +
+        "One lookup per fact; combine results in one spoken answer. Never returns phone password.",
       parameters: {
         type: "object",
         properties: {

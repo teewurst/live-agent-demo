@@ -24,6 +24,13 @@ export type TurnProfile = {
   totalMs: number;
   buckets: TurnProfileBucket[];
   spans: ProfileSpan[];
+  firstResponse: {
+    /** Server: turn start → first assistant caption SSE */
+    captionMs: number | null;
+    /** Server: turn start → first audio segment ready (TTS done) */
+    audioMs: number | null;
+    captionPreview?: string;
+  };
 };
 
 const BUCKET_LABELS: Record<TurnProfileBucket["key"], string> = {
@@ -72,6 +79,24 @@ export class TurnProfiler {
   private readonly startedAt = performance.now();
   private readonly spans: ProfileSpan[] = [];
   private readonly activeSpans = new Map<string, { kind: ProfileSpanKind; label: string; detail?: string; startedAt: number }>();
+  private firstCaptionMs: number | null = null;
+  private firstCaptionPreview = "";
+  private firstAudioMs: number | null = null;
+
+  markFirstCaption(preview: string): void {
+    if (this.firstCaptionMs !== null) {
+      return;
+    }
+    this.firstCaptionMs = Math.max(0, Math.round(performance.now() - this.startedAt));
+    this.firstCaptionPreview = preview.trim().slice(0, 120);
+  }
+
+  markFirstAudio(): void {
+    if (this.firstAudioMs !== null) {
+      return;
+    }
+    this.firstAudioMs = Math.max(0, Math.round(performance.now() - this.startedAt));
+  }
 
   startSpan(
     id: string,
@@ -134,6 +159,11 @@ export class TurnProfiler {
       totalMs,
       buckets: buildBuckets(spans),
       spans,
+      firstResponse: {
+        captionMs: this.firstCaptionMs,
+        audioMs: this.firstAudioMs,
+        captionPreview: this.firstCaptionPreview || undefined,
+      },
     };
   }
 }

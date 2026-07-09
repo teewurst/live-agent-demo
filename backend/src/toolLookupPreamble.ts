@@ -5,46 +5,38 @@ import type { SessionState } from "./types.js";
 import { writeEvent } from "./sse.js";
 import type { TurnProfiler } from "./turnProfiler.js";
 
-const GENERIC_PREAMBLES = [
-  "One moment, let me check that for you.",
-  "Give me just a second while I look that up.",
-  "Hold on, I'll pull that up in our system.",
-  "Let me take a quick look on my side.",
-  "Just a moment while I verify that.",
-  "I'll check that right away.",
-  "Bear with me for a second.",
-  "Let me see what we have on file.",
-];
-
-const PREAMBLES_BY_TOOL: Record<string, string[]> = {
+/** One contextual hold line per lookup phase — says what Helen is doing, not just "one moment". */
+const PREAMBLE_BY_TOOL: Record<string, string[]> = {
+  retrieve_information: [
+    "I'll check our documentation for that.",
+    "Let me look that up in our help guides.",
+  ],
   validate_customer: [
-    "One moment, I'll verify your account details.",
-    "Let me quickly confirm your customer information.",
-    "Give me a second to validate your credentials.",
-    "I'll check your account in our system now.",
-    "Hold on while I confirm your customer number.",
+    "I'll verify your account first, then pull up what you need.",
+    "Let me confirm your details first.",
   ],
   get_customer_information: [
-    "One moment, let me look up your account information.",
-    "I'll pull up your records right now.",
-    "Give me a second to find that in our system.",
-    "Let me check your account details.",
-    "Hold on, I'm retrieving that information now.",
-  ],
-  retrieve_information: [
-    "Let me check our knowledge base for that.",
-    "One moment, I'll look that up for you.",
-    "Give me a second to find the right information.",
-    "I'll search our documentation quickly.",
+    "I'll pull up your account records now.",
+    "Let me load that from your account.",
   ],
 };
 
-export function pickToolPreamble(toolName: string, avoidMessage?: string): string {
-  const pool = PREAMBLES_BY_TOOL[toolName] ?? GENERIC_PREAMBLES;
+const LOOKUP_PHASE_TOOLS = new Set(Object.keys(PREAMBLE_BY_TOOL));
+
+export type LookupPreambleState = {
+  lookupPreambleSpoken: boolean;
+  lastPreambleMessage: string;
+};
+
+export function isLookupPhaseTool(toolName: string): boolean {
+  return LOOKUP_PHASE_TOOLS.has(toolName);
+}
+
+export function pickLookupPhasePreamble(toolName: string, avoidMessage?: string): string {
+  const pool = PREAMBLE_BY_TOOL[toolName] ?? ["One moment please."];
   const candidates = avoidMessage ? pool.filter((line) => line !== avoidMessage) : pool;
   const choices = candidates.length > 0 ? candidates : pool;
-  const index = Math.floor(Math.random() * choices.length);
-  return choices[index] ?? pool[0];
+  return choices[Math.floor(Math.random() * choices.length)] ?? pool[0];
 }
 
 type PreambleOptions = {
@@ -56,12 +48,20 @@ type PreambleOptions = {
   profiler?: TurnProfiler;
 };
 
-export function speakBackendToolPreamble(
+/**
+ * Speaks at most one hold line per agent turn, before the first lookup-phase tool.
+ * Phrase matches the first tool (docs vs verify vs account load).
+ */
+export function speakLookupPreambleOnce(
   options: PreambleOptions,
   toolName: string,
-  lastPreambleMessage: string,
-): string {
-  const message = pickToolPreamble(toolName, lastPreambleMessage || undefined);
+  state: LookupPreambleState,
+): boolean {
+  if (state.lookupPreambleSpoken || !isLookupPhaseTool(toolName)) {
+    return false;
+  }
+
+  const message = pickLookupPhasePreamble(toolName, state.lastPreambleMessage || undefined);
   scheduleSpeakText(
     options.res,
     message,
@@ -82,5 +82,7 @@ export function speakBackendToolPreamble(
     text: message,
   });
 
-  return message;
+  state.lookupPreambleSpoken = true;
+  state.lastPreambleMessage = message;
+  return true;
 }

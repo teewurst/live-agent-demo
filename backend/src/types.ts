@@ -31,6 +31,8 @@ export type TimelineItem = {
 
 export type ToolBackendMode = "local" | "mcp";
 
+export type AgentPromptVariant = "default" | "latency_ux";
+
 export type DiscoveredMcpToolSnapshot = {
   name: string;
   description?: string;
@@ -51,6 +53,7 @@ export type SessionState = {
   customerValidated: boolean;
   customerNumber?: string;
   toolBackendMode: ToolBackendMode;
+  agentPromptVariant: AgentPromptVariant;
   discoveredMcpTools?: DiscoveredMcpToolSnapshot[];
   mcpDiscoveredAt?: string;
 };

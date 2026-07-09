@@ -16,8 +16,17 @@ import {
 } from "./sessions.js";
 import { closeSse, initSseResponse, writeEvent } from "./sse.js";
 import { applyToolBackendFromRequest } from "./toolBackend.js";
+import { applyAgentPromptFromRequest } from "./promptVariant.js";
 import { loadMcpDiscoveryCacheFromDisk } from "./mcpDiscoveryCache.js";
 import { TurnProfiler } from "./turnProfiler.js";
+import {
+  connectLiveSessionHandler,
+  createLiveSessionHandler,
+  getLivePromptHandler,
+  interruptLiveSessionHandler,
+  resetLiveSessionHandler,
+} from "./liveSession.js";
+import { executeLiveToolHandler } from "./liveToolHandler.js";
 
 loadMcpDiscoveryCacheFromDisk();
 
@@ -34,10 +43,16 @@ const upload = multer({
 app.use(
   cors({
     origin: config.FRONTEND_ORIGIN,
-    allowedHeaders: ["Content-Type", "X-Tool-Backend"],
+    allowedHeaders: [
+      "Content-Type",
+      "X-Tool-Backend",
+      "X-Agent-Prompt-Variant",
+      "X-Live-Agent-Prompt-Variant",
+    ],
   }),
 );
 app.use(express.json());
+app.use(express.text({ type: ["application/sdp", "text/plain"] }));
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
@@ -47,6 +62,13 @@ app.post("/api/sessions/instant", (_req, res) => {
   const session = createSession();
   res.json({ sessionId: session.id });
 });
+
+app.post("/api/live/sessions", createLiveSessionHandler);
+app.get("/api/live/sessions/:sessionId/prompt", getLivePromptHandler);
+app.post("/api/live/sessions/:sessionId/connect", connectLiveSessionHandler);
+app.post("/api/live/sessions/:sessionId/reset", resetLiveSessionHandler);
+app.post("/api/live/sessions/:sessionId/interrupt", interruptLiveSessionHandler);
+app.post("/api/live/sessions/:sessionId/tools/execute", executeLiveToolHandler);
 
 app.post("/api/sessions", async (req, res) => {
   initSseResponse(res);
@@ -151,6 +173,7 @@ app.post("/api/sessions/:sessionId/debug-message", async (req, res) => {
   }
 
   applyToolBackendFromRequest(req, session);
+  applyAgentPromptFromRequest(req, session);
 
   const abortController = new AbortController();
   setAbortController(session, abortController);
@@ -184,6 +207,7 @@ app.post(
     }
 
     applyToolBackendFromRequest(req, session);
+    applyAgentPromptFromRequest(req, session);
 
     const abortController = new AbortController();
     setAbortController(session, abortController);

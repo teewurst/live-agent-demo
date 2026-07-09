@@ -347,6 +347,7 @@ export function buildBenchmarkReport(events, scenario = STANDARD_SCENARIO, optio
       mode: options.executionMode ?? "mock",
       apis: options.apis ?? ["mock-openai.chat", "mock-openai.tts"],
       models: options.models ?? null,
+      promptVariant: options.promptVariant ?? null,
       wallClockMs,
     },
     scenario: {
@@ -371,6 +372,10 @@ export function buildBenchmarkReport(events, scenario = STANDARD_SCENARIO, optio
         ? (options.clientTiming.connectMs ?? 0) + (options.clientTiming.uploadMs ?? 0)
         : null,
       buckets: turnProfile?.buckets ?? [],
+      firstResponse: {
+        server: turnProfile?.firstResponse ?? null,
+        client: options.clientFirstResponse ?? null,
+      },
     },
     turnProfile,
     toolSequence,

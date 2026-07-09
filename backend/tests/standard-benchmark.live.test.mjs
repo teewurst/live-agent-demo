@@ -41,7 +41,7 @@ test(
   async () => {
     const sessionId = await createSession(backend.baseUrl);
     const wallStarted = performance.now();
-    const events = await runDebugTurn(
+    const { events } = await runDebugTurn(
       backend.baseUrl,
       sessionId,
       STANDARD_SCENARIO.input,

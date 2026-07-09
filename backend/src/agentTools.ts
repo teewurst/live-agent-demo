@@ -8,8 +8,8 @@ export const EMIT_OUTPUT_TOOL_DEFINITION: OpenAI.Chat.ChatCompletionTool = {
     name: EMIT_OUTPUT_TOOL,
     description:
       "Speak to the caller. You must use this for every spoken message — never use plain assistant text. " +
-      "Use for static knowledge answers (no backend tool) and for interim/final replies around tools. " +
-      "Set is_final=true when the caller should speak next (questions, completed answers).",
+      "Set is_final=true when the caller should speak next or the turn is complete. " +
+      "Never end with a hollow affirmation (e.g. 'Yes I can help') — include facts, steps, or an honest limit.",
     parameters: {
       type: "object",
       properties: {
@@ -36,6 +36,7 @@ export function buildSessionContextPrompt(session: {
   customerValidated: boolean;
   customerNumber?: string;
   toolBackendMode: "local" | "mcp";
+  agentPromptVariant?: "default" | "latency_ux";
   discoveredToolNames?: string[];
 }): string {
   const toolList =
@@ -48,6 +49,7 @@ export function buildSessionContextPrompt(session: {
     `- customerValidated: ${session.customerValidated}`,
     `- customerNumber: ${session.customerNumber ?? "none"}`,
     `- toolBackend: ${session.toolBackendMode}`,
+    `- agentPrompt: ${session.agentPromptVariant ?? "default"}`,
     session.customerValidated
       ? "Account lookup tools are allowed for this session."
       : "Account lookup tools are blocked until validate_customer succeeds.",

@@ -38,7 +38,7 @@ after(async () => {
 
 test("validated research flow speaks interim output, researches, and finishes", async () => {
   const sessionId = await createSession(backend.baseUrl);
-  const events = await runDebugTurn(
+  const { events } = await runDebugTurn(
     backend.baseUrl,
     sessionId,
     "Please find my latest invoice. Customer 12345 password 9876.",
@@ -58,7 +58,7 @@ test("validated research flow speaks interim output, researches, and finishes", 
 
 test("research without validation is blocked and explained to the caller", async () => {
   const sessionId = await createSession(backend.baseUrl);
-  const events = await runDebugTurn(
+  const { events } = await runDebugTurn(
     backend.baseUrl,
     sessionId,
     "Look up my invoice without validating first.",
@@ -80,7 +80,7 @@ test("research without validation is blocked and explained to the caller", async
 
 test("local tool backend returns demo validation and research results", async () => {
   const sessionId = await createSession(backend.baseUrl);
-  const events = await runDebugTurn(
+  const { events } = await runDebugTurn(
     backend.baseUrl,
     sessionId,
     "Please find my latest invoice. Customer 12345 password 9876.",

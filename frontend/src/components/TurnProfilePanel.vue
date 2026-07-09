@@ -60,6 +60,14 @@ const bucketRows = computed(() => {
       <span class="turn-profile-total">#{{ profile.turnId }} · {{ formatProfileMs(profile.totalMs) }}</span>
     </div>
 
+    <p v-if="profile.firstResponse?.captionMs != null" class="turn-profile-first-response">
+      First response:
+      caption {{ formatProfileMs(profile.firstResponse.captionMs) }}
+      <template v-if="profile.firstResponse.audioMs != null">
+        · audio {{ formatProfileMs(profile.firstResponse.audioMs) }}
+      </template>
+    </p>
+
     <div class="turn-profile-bars">
       <div v-for="bucket in bucketRows" :key="bucket.key" class="turn-profile-bucket">
         <div class="turn-profile-row">

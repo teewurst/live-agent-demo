@@ -26,6 +26,11 @@ export type TurnProfile = {
   totalMs: number;
   buckets: TurnProfileBucket[];
   spans: TurnProfileSpan[];
+  firstResponse?: {
+    captionMs: number | null;
+    audioMs: number | null;
+    captionPreview?: string;
+  };
 };
 
 export type ClientTurnTiming = {

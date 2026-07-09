@@ -42,6 +42,7 @@ async function speakPhrase(
     if (signal.aborted) {
       return false;
     }
+    profiler?.markFirstAudio();
     writeEvent(res, "audio_segment", {
       sequence,
       mimeType: audio.mimeType,
@@ -93,7 +94,7 @@ export async function speakText(
   }
 
   onDelta?.(trimmed);
-  writeEvent(res, "assistant_caption_delta", { delta: trimmed });
+  emitCaption(res, trimmed, profiler);
 
   const phrases =
     trimmed.length <= config.TTS_WHOLE_MESSAGE_MAX_CHARS
@@ -118,7 +119,7 @@ export function scheduleSpeakText(
     return false;
   }
 
-  writeEvent(res, "assistant_caption_delta", { delta: trimmed });
+  emitCaption(res, trimmed, profiler);
   writeEvent(res, "status", { state: "speaking" });
 
   const phrases =
@@ -136,6 +137,19 @@ export function scheduleSpeakText(
 
   pendingSpeech.push(task);
   return true;
+}
+
+function emitCaption(
+  res: Response,
+  text: string,
+  profiler?: TurnProfiler,
+): void {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return;
+  }
+  profiler?.markFirstCaption(trimmed);
+  writeEvent(res, "assistant_caption_delta", { delta: trimmed });
 }
 
 function collectPhrases(text: string): string[] {

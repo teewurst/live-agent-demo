@@ -2,7 +2,9 @@ import { ref } from "vue";
 import type { SseEventName } from "../api/client";
 import {
   createIdleExecution,
+  createIdleLiveExecution,
   type ExecutionState,
+  type LiveExecutionState,
   type McpToolId,
   type TimelineItem,
   type ToolNodeState,
@@ -39,6 +41,22 @@ function refreshToolLocks(state: ExecutionState): void {
 
 function idleToolState(state: ExecutionState, toolId: McpToolId): ToolNodeState {
   return toolId === "get_customer_information" && !state.customerValidated ? "locked" : "idle";
+}
+
+function refreshLiveToolLocks(state: LiveExecutionState): void {
+  state.toolStates.get_customer_information = state.customerValidated ? "idle" : "locked";
+}
+
+function idleLiveToolState(state: LiveExecutionState, toolId: McpToolId): ToolNodeState {
+  return toolId === "get_customer_information" && !state.customerValidated ? "locked" : "idle";
+}
+
+function syncLiveMcpHostActive(state: LiveExecutionState): void {
+  const toolLit = [...MCP_TOOLS].some((id) => {
+    const s = state.toolStates[id];
+    return s === "active" || s === "success" || s === "error";
+  });
+  state.mcpHostActive = toolLit;
 }
 
 function syncMcpHostActive(state: ExecutionState): void {
@@ -106,22 +124,66 @@ function parseTurnProfile(data: Record<string, unknown>): TurnProfile {
       }))
     : [];
 
+  const firstResponseRaw = data.firstResponse as Record<string, unknown> | undefined;
+
   return {
     turnId: Number(data.turnId ?? 0),
     totalMs: Number(data.totalMs ?? 0),
     buckets,
     spans,
+    firstResponse: firstResponseRaw
+      ? {
+          captionMs:
+            firstResponseRaw.captionMs === null || firstResponseRaw.captionMs === undefined
+              ? null
+              : Number(firstResponseRaw.captionMs),
+          audioMs:
+            firstResponseRaw.audioMs === null || firstResponseRaw.audioMs === undefined
+              ? null
+              : Number(firstResponseRaw.audioMs),
+          captionPreview: firstResponseRaw.captionPreview
+            ? String(firstResponseRaw.captionPreview)
+            : undefined,
+        }
+      : undefined,
   };
 }
 
 export function useOrchestrationState() {
   const sessionLog = ref<TimelineItem[]>([]);
   const execution = ref<ExecutionState>(createIdleExecution());
+  const liveExecution = ref<LiveExecutionState>(createIdleLiveExecution());
   const turnProfile = ref<TurnProfile | null>(null);
   const expandedIds = ref<Set<string>>(new Set());
   const liveAssistantId = ref<string | null>(null);
   let pendingClientTurnTiming: ClientTurnTiming | null = null;
   let toolStatusTimer: ReturnType<typeof window.setTimeout> | null = null;
+  let liveToolStatusTimer: ReturnType<typeof window.setTimeout> | null = null;
+
+  function clearLiveToolStatusTimer(): void {
+    if (liveToolStatusTimer !== null) {
+      window.clearTimeout(liveToolStatusTimer);
+      liveToolStatusTimer = null;
+    }
+  }
+
+  function scheduleLiveToolStatusHold(): void {
+    clearLiveToolStatusTimer();
+    liveToolStatusTimer = window.setTimeout(() => {
+      const state = liveExecution.value;
+      for (const toolId of MCP_TOOLS) {
+        const current = state.toolStates[toolId];
+        if (current === "success" || current === "error") {
+          state.toolStates[toolId] = idleLiveToolState(state, toolId);
+        }
+      }
+      if (state.activeMcpTool && state.toolStates[state.activeMcpTool] !== "active") {
+        state.activeMcpTool = null;
+      }
+      syncLiveMcpHostActive(state);
+      liveToolStatusTimer = null;
+    }, TOOL_STATUS_HOLD_MS);
+  }
 
   function clearToolStatusTimer(): void {
     if (toolStatusTimer !== null) {
@@ -163,20 +225,24 @@ export function useOrchestrationState() {
 
   function clearSession(): void {
     clearToolStatusTimer();
+    clearLiveToolStatusTimer();
     sessionLog.value = [];
     turnProfile.value = null;
     pendingClientTurnTiming = null;
     expandedIds.value = new Set();
     liveAssistantId.value = null;
     execution.value = createIdleExecution();
+    liveExecution.value = createIdleLiveExecution();
   }
 
   function resetExecution(): void {
     clearToolStatusTimer();
+    clearLiveToolStatusTimer();
     liveAssistantId.value = null;
     turnProfile.value = null;
     pendingClientTurnTiming = null;
     execution.value = createIdleExecution();
+    liveExecution.value = createIdleLiveExecution();
   }
 
   function setGraphIdle(): void {
@@ -193,6 +259,80 @@ export function useOrchestrationState() {
       state.toolStates[toolId] = idleToolState(state, toolId);
     }
     syncNodeHighlights(state);
+  }
+
+  function setLiveGraphIdle(): void {
+    clearLiveToolStatusTimer();
+    liveExecution.value = createIdleLiveExecution();
+  }
+
+  function setLiveAgentActive(active: boolean): void {
+    const state = liveExecution.value;
+    if (state.paused) {
+      return;
+    }
+    state.agentActive = active || state.mcpHostActive;
+  }
+
+  function markLiveInterrupted(): void {
+    clearLiveToolStatusTimer();
+    const state = liveExecution.value;
+    state.paused = true;
+    state.agentActive = false;
+    state.mcpHostActive = false;
+    state.activeMcpTool = null;
+  }
+
+  function resumeLiveAfterInterrupt(): void {
+    const state = liveExecution.value;
+    state.paused = false;
+    state.agentActive = true;
+  }
+
+  function onLiveToolCall(toolName: string, toolCallId: string): void {
+    const state = liveExecution.value;
+    state.paused = false;
+    state.focusToolCallId = toolCallId;
+    state.agentActive = true;
+
+    if (isMcpTool(toolName)) {
+      state.activeMcpTool = toolName;
+      for (const key of MCP_TOOLS) {
+        if (key === toolName) {
+          state.toolStates[key] = "active";
+        } else if (state.toolStates[key] !== "success") {
+          state.toolStates[key] = idleLiveToolState(state, key);
+        }
+      }
+      syncLiveMcpHostActive(state);
+    }
+  }
+
+  function onLiveToolResult(
+    toolName: string,
+    status: "success" | "error",
+    result: unknown,
+  ): void {
+    const state = liveExecution.value;
+
+    if (isMcpTool(toolName)) {
+      state.toolStates[toolName] = status === "error" ? "error" : "success";
+      state.activeMcpTool = toolName;
+
+      if (
+        toolName === "validate_customer" &&
+        status === "success" &&
+        result &&
+        typeof result === "object" &&
+        (result as { valid?: boolean }).valid
+      ) {
+        state.customerValidated = true;
+        refreshLiveToolLocks(state);
+      }
+
+      syncLiveMcpHostActive(state);
+      scheduleLiveToolStatusHold();
+    }
   }
 
   function setOutputPlaybackActive(active: boolean): void {
@@ -447,9 +587,60 @@ export function useOrchestrationState() {
     }
   }
 
+  function handleLiveEvent(eventType: string, data: Record<string, unknown>): string | null {
+    switch (eventType) {
+      case "user_transcript":
+        addLogItem({ kind: "user", text: String(data.text ?? "") });
+        return null;
+      case "assistant_caption_delta":
+        appendLiveAssistant(String(data.delta ?? ""));
+        return null;
+      case "assistant_text_final":
+        finalizeLiveAssistant(String(data.text ?? ""));
+        return null;
+      case "tool_call": {
+        const toolName = String(data.toolName ?? "tool");
+        const toolCallId = String(data.toolCallId ?? "");
+        onLiveToolCall(toolName, toolCallId);
+        addLogItem({
+          kind: "tool_call",
+          text: `Tool call: ${toolName}`,
+          toolCallId,
+          toolName,
+          arguments: (data.arguments as Record<string, unknown>) ?? {},
+          status: "running",
+        });
+        return toolCallId;
+      }
+      case "tool_result": {
+        const toolName = String(data.toolName ?? "tool");
+        const toolCallId = String(data.toolCallId ?? "");
+        const status = data.status === "error" ? "error" : "success";
+        onLiveToolResult(toolName, status, data.result);
+        addLogItem({
+          kind: "tool_result",
+          text: `Tool result: ${toolName}`,
+          toolCallId,
+          toolName,
+          result: data.result,
+          status,
+        });
+        return toolCallId;
+      }
+      case "error": {
+        const message = String(data.message ?? "Unexpected error");
+        addLogItem({ kind: "error", text: message });
+        return message;
+      }
+      default:
+        return null;
+    }
+  }
+
   return {
     sessionLog,
     execution,
+    liveExecution,
     turnProfile,
     setClientTurnTiming,
     expandedIds,
@@ -458,6 +649,10 @@ export function useOrchestrationState() {
     clearSession,
     resetExecution,
     setGraphIdle,
+    setLiveGraphIdle,
+    setLiveAgentActive,
+    markLiveInterrupted,
+    resumeLiveAfterInterrupt,
     markInterrupted,
     setOutputPlaybackActive,
     onPlaybackEnded,
@@ -465,6 +660,7 @@ export function useOrchestrationState() {
     toggleExpanded,
     focusToolCall,
     handleSseEvent,
+    handleLiveEvent,
     appendLiveAssistant,
     finalizeLiveAssistant,
   };

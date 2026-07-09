@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
-import type { ToolBackendMode } from "../api/client";
+import type { AgentPromptVariant, ToolBackendMode } from "../api/client";
+import { AGENT_PROMPT_LABELS } from "../api/client";
 import type { ExecutionState, TimelineItem } from "../types/orchestration";
 import type { TurnProfile } from "../types/turnProfile";
 import { formatJson, summarizeTimelineLine } from "../utils/timelineSummary";
@@ -13,6 +14,7 @@ const props = defineProps<{
   turnProfile: TurnProfile | null;
   expandedIds: Set<string>;
   toolBackendMode: ToolBackendMode;
+  agentPromptVariant: AgentPromptVariant;
 }>();
 
 const emit = defineEmits<{
@@ -109,7 +111,10 @@ watch(
   <aside class="background-panel">
     <div class="background-panel-header">
       <h2>Running in the background</h2>
-      <p>Architecture view — live activity</p>
+      <p>
+        Architecture view — live activity ·
+        {{ AGENT_PROMPT_LABELS[agentPromptVariant] }}
+      </p>
     </div>
 
     <div class="background-panel-body">

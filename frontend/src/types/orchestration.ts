@@ -73,3 +73,29 @@ export function createIdleExecution(): ExecutionState {
     focusToolCallId: null,
   };
 }
+
+export type LiveExecutionState = {
+  agentActive: boolean;
+  mcpHostActive: boolean;
+  activeMcpTool: McpToolId | null;
+  toolStates: Record<McpToolId, ToolNodeState>;
+  customerValidated: boolean;
+  paused: boolean;
+  focusToolCallId: string | null;
+};
+
+export function createIdleLiveExecution(): LiveExecutionState {
+  return {
+    agentActive: false,
+    mcpHostActive: false,
+    activeMcpTool: null,
+    toolStates: {
+      retrieve_information: "idle",
+      validate_customer: "idle",
+      get_customer_information: "locked",
+    },
+    customerValidated: false,
+    paused: false,
+    focusToolCallId: null,
+  };
+}

@@ -1,6 +1,15 @@
 import { v4 as uuidv4 } from "uuid";
+import { config } from "./config.js";
 import { AppError } from "./errors.js";
-import type { ChatMessage, ChatRole, SessionState, TimelineItem, TimelineItemKind, ToolBackendMode } from "./types.js";
+import type {
+  AgentPromptVariant,
+  ChatMessage,
+  ChatRole,
+  SessionState,
+  TimelineItem,
+  TimelineItemKind,
+  ToolBackendMode,
+} from "./types.js";
 import { teardownMcpSession } from "./mcpToolRegistry.js";
 
 const sessions = new Map<string, SessionState>();
@@ -22,6 +31,7 @@ function createEmptySession(): SessionState {
     greetingPlayed: false,
     customerValidated: false,
     toolBackendMode: "local",
+    agentPromptVariant: config.LIVE_AGENT_PROMPT_VARIANT,
   };
 }
 
@@ -156,5 +166,10 @@ export function setCustomerValidation(
 
 export function setToolBackendMode(session: SessionState, mode: ToolBackendMode): void {
   session.toolBackendMode = mode;
+  session.updatedAt = nowIso();
+}
+
+export function setAgentPromptVariant(session: SessionState, variant: AgentPromptVariant): void {
+  session.agentPromptVariant = variant;
   session.updatedAt = nowIso();
 }

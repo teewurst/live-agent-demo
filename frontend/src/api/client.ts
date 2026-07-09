@@ -44,13 +44,28 @@ function readUtteranceResourceTiming(
 
 export type ToolBackendMode = "local" | "mcp";
 
-export const TOOL_BACKEND_HEADER = "X-Tool-Backend";
+export type AgentPromptVariant = "default" | "latency_ux";
 
-function toolBackendHeaders(toolBackend?: ToolBackendMode): HeadersInit {
-  if (!toolBackend) {
-    return {};
+export const TOOL_BACKEND_HEADER = "X-Tool-Backend";
+export const AGENT_PROMPT_VARIANT_HEADER = "X-Agent-Prompt-Variant";
+
+export const AGENT_PROMPT_LABELS: Record<AgentPromptVariant, string> = {
+  default: "Prompt A (classic)",
+  latency_ux: "Prompt B (operator UX)",
+};
+
+function requestOptionHeaders(
+  toolBackend?: ToolBackendMode,
+  agentPromptVariant?: AgentPromptVariant,
+): HeadersInit {
+  const headers: Record<string, string> = {};
+  if (toolBackend) {
+    headers[TOOL_BACKEND_HEADER] = toolBackend;
   }
-  return { [TOOL_BACKEND_HEADER]: toolBackend };
+  if (agentPromptVariant) {
+    headers[AGENT_PROMPT_VARIANT_HEADER] = agentPromptVariant;
+  }
+  return headers;
 }
 
 export async function createSession(): Promise<string> {
@@ -196,6 +211,7 @@ export async function sendUtterance(
   clientTurnId?: string,
   toolBackend?: ToolBackendMode,
   onUploadComplete?: (timing: UtteranceUploadTiming) => void,
+  agentPromptVariant?: AgentPromptVariant,
 ): Promise<UtteranceUploadTiming> {
   const formData = new FormData();
   formData.append("audio", audioBlob, "utterance.webm");
@@ -209,7 +225,7 @@ export async function sendUtterance(
     method: "POST",
     body: formData,
     signal,
-    headers: toolBackendHeaders(toolBackend),
+    headers: requestOptionHeaders(toolBackend, agentPromptVariant),
   });
   const fallbackUploadMs = Math.max(0, Math.round(performance.now() - uploadStarted));
   const { uploadMs, connectMs } = readUtteranceResourceTiming(utteranceUrl, fallbackUploadMs);
@@ -237,12 +253,13 @@ export async function sendDebugMessage(
   signal?: AbortSignal,
   clientTurnId?: string,
   toolBackend?: ToolBackendMode,
+  agentPromptVariant?: AgentPromptVariant,
 ): Promise<void> {
   const response = await fetch(`${API_BASE}/api/sessions/${sessionId}/debug-message`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...toolBackendHeaders(toolBackend),
+      ...requestOptionHeaders(toolBackend, agentPromptVariant),
     },
     body: JSON.stringify({ text, clientTurnId }),
     signal,

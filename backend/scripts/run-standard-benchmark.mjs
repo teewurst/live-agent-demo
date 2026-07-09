@@ -74,7 +74,7 @@ async function runMockBenchmark() {
   try {
     const sessionId = await createSession(backend.baseUrl);
     const wallStarted = performance.now();
-    const events = await runDebugTurn(
+    const { events, clientFirstResponse } = await runDebugTurn(
       backend.baseUrl,
       sessionId,
       STANDARD_SCENARIO.input,
@@ -84,6 +84,7 @@ async function runMockBenchmark() {
       mode: "strict",
       executionMode: "mock",
       route: "debug-message",
+      clientFirstResponse,
       apis: ["mock-openai.chat", "mock-openai.tts"],
       wallClockMs: Math.round(performance.now() - wallStarted),
     });
@@ -109,7 +110,7 @@ async function runLiveBenchmark(route) {
 
     if (route === "utterance") {
       const audioBuffer = await ensureUtteranceFixture();
-      const { events, clientTiming } = await runUtteranceTurn(
+      const { events, clientTiming, clientFirstResponse } = await runUtteranceTurn(
         backend.baseUrl,
         sessionId,
         audioBuffer,
@@ -122,6 +123,7 @@ async function runLiveBenchmark(route) {
         executionMode: "live-voice",
         route: "utterance",
         clientTiming,
+        clientFirstResponse,
         apis: [
           "openai.audio.transcriptions",
           "openai.chat.completions",
@@ -136,7 +138,7 @@ async function runLiveBenchmark(route) {
       });
     }
 
-    const events = await runDebugTurn(
+    const { events, clientFirstResponse } = await runDebugTurn(
       backend.baseUrl,
       sessionId,
       STANDARD_SCENARIO.input,
@@ -147,6 +149,7 @@ async function runLiveBenchmark(route) {
       mode: "live",
       executionMode: "live-debug",
       route: "debug-message",
+      clientFirstResponse,
       apis: ["openai.chat.completions", "openai.audio.speech"],
       models: {
         agent: process.env.OPENAI_AGENT_MODEL ?? null,
@@ -176,6 +179,7 @@ async function main() {
 
   process.stderr.write(
     `Mode: ${report.execution.mode} · wall ${report.summary.totalMs ?? report.execution.wallClockMs} ms server · ` +
+      `first caption ${report.summary.firstResponse?.server?.captionMs ?? report.summary.firstResponse?.client?.captionMs ?? "?"} ms · ` +
       `passed: ${report.passed}\n`,
   );
 

@@ -101,18 +101,27 @@ async function startBackendProcess(backendProcess, backendBaseUrl, readyTimeoutM
   };
 }
 
-export async function readSse(response) {
+export async function readSse(response, options = {}) {
   assert.equal(response.status, 200);
   assert.ok(response.body);
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   const events = [];
   let buffer = "";
+  const requestStartedAt = options.requestStartedAt ?? performance.now();
+  let streamStartedAt = options.streamStartedAt ?? null;
+  let firstChunkAt = null;
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) {
       break;
+    }
+    if (firstChunkAt === null) {
+      firstChunkAt = performance.now();
+      if (streamStartedAt === null) {
+        streamStartedAt = firstChunkAt;
+      }
     }
     buffer += decoder.decode(value, { stream: true });
 
@@ -123,13 +132,35 @@ export async function readSse(response) {
       const name = block.match(/^event:\s*(.+)$/m)?.[1];
       const rawData = block.match(/^data:\s*(.+)$/m)?.[1];
       if (name && rawData) {
-        events.push({ name, data: JSON.parse(rawData) });
+        const receivedAtMs = Math.round(performance.now() - requestStartedAt);
+        const streamAtMs =
+          streamStartedAt !== null ? Math.round(performance.now() - streamStartedAt) : null;
+        events.push({
+          name,
+          data: JSON.parse(rawData),
+          receivedAtMs,
+          streamAtMs,
+        });
       }
       boundary = buffer.indexOf("\n\n");
     }
   }
 
   return events;
+}
+
+export function computeClientFirstResponse(events) {
+  const captionEvent = events.find((event) => event.name === "assistant_caption_delta");
+  const audioEvent = events.find((event) => event.name === "audio_segment");
+
+  return {
+    captionMs: captionEvent?.receivedAtMs ?? null,
+    audioMs: audioEvent?.receivedAtMs ?? null,
+    streamCaptionMs: captionEvent?.streamAtMs ?? null,
+    streamAudioMs: audioEvent?.streamAtMs ?? null,
+    captionPreview:
+      captionEvent?.data?.delta != null ? String(captionEvent.data.delta).slice(0, 120) : undefined,
+  };
 }
 
 export async function createSession(backendBaseUrl) {
@@ -139,6 +170,7 @@ export async function createSession(backendBaseUrl) {
 }
 
 export async function runDebugTurn(backendBaseUrl, sessionId, text, toolBackend = "local") {
+  const requestStartedAt = performance.now();
   const response = await fetch(`${backendBaseUrl}/api/sessions/${sessionId}/debug-message`, {
     method: "POST",
     headers: {
@@ -147,7 +179,8 @@ export async function runDebugTurn(backendBaseUrl, sessionId, text, toolBackend 
     },
     body: JSON.stringify({ text }),
   });
-  return readSse(response);
+  const events = await readSse(response, { requestStartedAt });
+  return { events, clientFirstResponse: computeClientFirstResponse(events) };
 }
 
 function readUtteranceResourceTiming(url, fallbackMs) {
@@ -186,9 +219,13 @@ export async function runUtteranceTurn(
       "X-Tool-Backend": toolBackend,
     },
   });
-  const fallbackUploadMs = Math.max(0, Math.round(performance.now() - uploadStarted));
+  const streamStartedAt = performance.now();
+  const fallbackUploadMs = Math.max(0, Math.round(streamStartedAt - uploadStarted));
   const { uploadMs, connectMs } = readUtteranceResourceTiming(utteranceUrl, fallbackUploadMs);
-  const events = await readSse(response);
+  const events = await readSse(response, {
+    requestStartedAt: uploadStarted,
+    streamStartedAt,
+  });
 
   return {
     events,
@@ -197,5 +234,6 @@ export async function runUtteranceTurn(
       connectMs,
       audioBytes: audioBuffer.byteLength,
     },
+    clientFirstResponse: computeClientFirstResponse(events),
   };
 }

@@ -13,6 +13,11 @@ const envSchema = z.object({
   OPENAI_TTS_VOICE: z.string().default("shimmer"),
   OPENAI_TTS_FORMAT: z.enum(["mp3", "wav", "opus", "aac", "flac", "pcm"]).default("mp3"),
   OPENAI_AGENT_MODEL: z.string().default("gpt-5.4-nano"),
+  OPENAI_REALTIME_MODEL: z.string().default("gpt-realtime"),
+  OPENAI_REALTIME_VOICE: z.string().default("shimmer"),
+  OPENAI_REALTIME_TRANSCRIPTION_MODEL: z.string().default("gpt-4o-mini-transcribe"),
+  AGENT_PROMPT_VARIANT: z.enum(["default", "latency_ux"]).default("default"),
+  LIVE_AGENT_PROMPT_VARIANT: z.enum(["default", "latency_ux"]).default("default"),
   AGENT_MAX_TOOL_CALLS: z.coerce.number().default(8),
   AGENT_LOG_ENABLED: z
     .string()
