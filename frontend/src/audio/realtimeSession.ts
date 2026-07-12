@@ -175,7 +175,7 @@ export class RealtimeSession {
   private initialTurnRequested = false;
   private sessionReady = false;
   private openingGreeting =
-    "Hi, this is Helen from Nexus ERP support. How can I help you today?";
+    "Danke, dass Sie Nexus ERP angerufen haben. Ihre Wartezeit beträgt derzeit etwa 13 Minuten. Ich bin Ihr persönlicher KI-Assistent — vielleicht kann ich Ihnen schon jetzt helfen.";
   private sessionReadyResolvers: Array<() => void> = [];
   private initialGreetingFallbackTimer: number | null = null;
 
@@ -519,7 +519,7 @@ export class RealtimeSession {
     this.liveAgentPromptVariant = liveAgentPromptVariant;
     this.openingGreeting =
       openingGreeting?.trim() ||
-      "Hi, this is Helen from Nexus ERP support. How can I help you today?";
+      "Danke, dass Sie Nexus ERP angerufen haben. Ihre Wartezeit beträgt derzeit etwa 13 Minuten. Ich bin Ihr persönlicher KI-Assistent — vielleicht kann ich Ihnen schon jetzt helfen.";
     this.handledCallIds.clear();
     this.responseActive = false;
     this.audioPlaying = false;

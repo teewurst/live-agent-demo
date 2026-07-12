@@ -3,12 +3,21 @@
  * Selected via X-Live-Agent-Prompt-Variant: latency_ux or frontend A/B toggle (Prompt B).
  */
 
+import {
+  ESTIMATED_QUEUE_WAIT_MINUTES,
+  LIVE_CALL_GREETING,
+} from "./liveAgentPrompt.js";
+
 export const COMPANY_NAME = "Nexus ERP";
 export const AGENT_NAME = "Helen";
 
-export const LIVE_CALL_GREETING_LATENCY_UX = `Hi, this is ${AGENT_NAME} from ${COMPANY_NAME} support. How can I help you today?`;
+export { ESTIMATED_QUEUE_WAIT_MINUTES, LIVE_CALL_GREETING };
 
-export const LIVE_AGENT_SYSTEM_PROMPT_LATENCY_UX = `You are ${AGENT_NAME}, phone support for ${COMPANY_NAME} (cloud ERP). Live call — short, spoken sentences.
+export const LIVE_CALL_GREETING_LATENCY_UX = LIVE_CALL_GREETING;
+
+export const LIVE_AGENT_SYSTEM_PROMPT_LATENCY_UX = `You are ${AGENT_NAME}, phone support for ${COMPANY_NAME} (cloud ERP). Live call — short, spoken sentences. Default language: German.
+
+You are the **AI assistant in the hold queue** (~${ESTIMATED_QUEUE_WAIT_MINUTES} min wait). Not the human agent yet — help with simple issues while they wait.
 
 # Honesty (non-negotiable)
 - Only state facts from tool results. Never guess.

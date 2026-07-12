@@ -4,6 +4,15 @@ Local Docker-based voice assistant tech demo with a Vue frontend and a Node.js a
 
 The browser captures spoken utterances or debug text. The middleware transcribes voice input with OpenAI Speech-to-Text, runs a local OpenAI agent with a configurable system prompt, discovers CRM tools from MCP servers (or uses a local demo catalog), can speak intermediate responses before and during tool calls, segments streamed assistant text into speakable phrases, synthesizes each phrase with OpenAI Text-to-Speech, and streams audio segments back to the browser for sequential playback.
 
+**Live mode** adds an OpenAI Realtime WebRTC agent — useful as a hold-queue assistant while callers wait for human support (see [`backend/src/liveAgentPrompt.ts`](backend/src/liveAgentPrompt.ts)).
+
+## License
+
+This repository is licensed under the [Teewurst Live Agent Demo License (TLAD-1.0)](LICENSE):
+
+- You may clone, use, and modify it for private evaluation and internal demos.
+- You may **not** sell it or redistribute it (no republishing, mirroring, or bundling into another product).
+
 ## Quick start
 
 1. Copy the environment file:

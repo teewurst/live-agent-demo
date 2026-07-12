@@ -1,4 +1,8 @@
-import { LIVE_AGENT_SYSTEM_PROMPT } from "./liveAgentPrompt.js";
+import {
+  ESTIMATED_QUEUE_WAIT_MINUTES,
+  LIVE_CALL_GREETING,
+  LIVE_AGENT_SYSTEM_PROMPT,
+} from "./liveAgentPrompt.js";
 import { LIVE_AGENT_SYSTEM_PROMPT_LATENCY_UX } from "./liveAgentPrompt.latencyUx.js";
 import type { AgentPromptVariant } from "./types.js";
 
@@ -9,9 +13,8 @@ export function getLiveAgentSystemPrompt(variant: AgentPromptVariant): string {
   return LIVE_AGENT_SYSTEM_PROMPT;
 }
 
-export function getLiveCallGreeting(variant: AgentPromptVariant): string {
-  if (variant === "latency_ux") {
-    return `Hi, this is Helen from Nexus ERP support. How can I help you today?`;
-  }
-  return `Hi, this is Helen from Nexus ERP support. How can I help you today?`;
+export function getLiveCallGreeting(_variant: AgentPromptVariant): string {
+  return LIVE_CALL_GREETING;
 }
+
+export { ESTIMATED_QUEUE_WAIT_MINUTES, LIVE_CALL_GREETING };
